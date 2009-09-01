@@ -2,6 +2,23 @@
 # by attaching to a Win32ole Internet Explorer application and listening for events.
 # I hope that this will provide similar functionality for IE that the wonderful
 # SeleniumIDE for Firefox already achieves.
+require 'win32ole'
+
+
+module BrowserEvents
+	def methodExists?(method_name)
+		self.methods.include?(method_name)
+	end
+
+	def BeforeNavigate2(*ev_args)
+		pp ev_args.sort
+	end
+
+	def OnQuit(*ev_args)
+		throw :done
+	end
+end
+
 
 
 class SeleniumIERecorder
@@ -73,21 +90,6 @@ class SeleniumIERecorder
 	end
 end
 
-
-
-module BrowserEvents
-	def methodExists?(method_name)
-		self.methods.include?(method_name)
-	end
-
-	def BeforeNavigate2(*ev_args)
-		pp ev_args.sort
-	end
-
-	def OnQuit(*ev_args)
-		throw :done
-	end
-end
 
 recorder = SeleniumIERecorder.new
 recorder.record
