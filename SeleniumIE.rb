@@ -7,11 +7,11 @@ require 'win32ole'
 
 module BrowserEvents
 	def methodExists?(method_name)
-		self.methods.include?(method_name)
+		return self.methods.include?(method_name)
 	end
 
 	def BeforeNavigate2(*ev_args)
-		pp ev_args.sort
+		puts "BeforeNavigate2: #{ev_args.class.to_s}"
 	end
 
 	def OnQuit(*ev_args)
