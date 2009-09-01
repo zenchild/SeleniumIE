@@ -5,6 +5,7 @@
 
 
 class SeleniumIERecorder
+	include BrowserEvents
 
 	# ========================== Public Methods ========================= 
 	public
@@ -37,7 +38,9 @@ class SeleniumIERecorder
 
 	# eventHandler is the dispatcher for all incoming events.
 	def eventHandler(ev_name, *ev_args)
-		puts "Dispatching: #{ev_name}"
+		if methodExists?(ev_name)
+			method(ev_name).call(ev_args)
+		end
 	end
 
 	# This writes out the Selenium/RDspec statement with an optional code indentation argument.
@@ -68,8 +71,22 @@ class SeleniumIERecorder
 			# =============================================================== #
 		EOS
 	end
+end
 
 
+
+module BrowserEvents
+	def methodExists?(method_name)
+		self.methods.include?(method_name)
+	end
+
+	def BeforeNavigate2(*ev_args)
+		pp ev_args.sort
+	end
+
+	def OnQuit(*ev_args)
+		throw :done
+	end
 end
 
 recorder = SeleniumIERecorder.new
