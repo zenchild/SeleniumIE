@@ -39,8 +39,6 @@ class SeleniumIERecorder
 	# eventHandler is the dispatcher for all incoming events.
 	def eventHandler(ev_name, *ev_args)
 		if methodExists?(ev_name)
-			puts "Method Name: #{ev_name}"
-			puts "Method Args: #{ev_args}"
 			method(ev_name).call(*ev_args)
 		end
 	end
@@ -79,6 +77,8 @@ class SeleniumIERecorder
 	end
 
 	# ========================= IE Event Methods ========================
+	# These need to be public if the methodsExists? method is to work
+	public
 
 	# http://msdn.microsoft.com/en-us/library/aa768280(VS.85).aspx
 	def BeforeNavigate2(*ev_args)
