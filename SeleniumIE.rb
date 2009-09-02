@@ -5,24 +5,7 @@
 require 'win32ole'
 
 
-module BrowserEvents
-	def methodExists?(method_name)
-		return self.methods.include?(method_name)
-	end
-
-	def BeforeNavigate2(*ev_args)
-		puts "BeforeNavigate2: #{ev_args.class.to_s}"
-	end
-
-	def OnQuit(*ev_args)
-		throw :done
-	end
-end
-
-
-
 class SeleniumIERecorder
-	include BrowserEvents
 
 	# ========================== Public Methods ========================= 
 	public
@@ -56,7 +39,9 @@ class SeleniumIERecorder
 	# eventHandler is the dispatcher for all incoming events.
 	def eventHandler(ev_name, *ev_args)
 		if methodExists?(ev_name)
-			method(ev_name).call(ev_args)
+			puts "Method Name: #{ev_name}"
+			puts "Method Args: #{ev_args}"
+			method(ev_name).call(*ev_args)
 		end
 	end
 
@@ -88,6 +73,24 @@ class SeleniumIERecorder
 			# =============================================================== #
 		EOS
 	end
+
+	def methodExists?(method_name)
+		return self.methods.include?(method_name)
+	end
+
+	# ========================= IE Event Methods ========================
+
+	# http://msdn.microsoft.com/en-us/library/aa768280(VS.85).aspx
+	def BeforeNavigate2(*ev_args)
+		puts "BeforeNavigate2: #{ev_args.class.to_s}"
+	end
+
+	# http://msdn.microsoft.com/en-us/library/cc136549(VS.85).aspx
+	def OnQuit(*ev_args)
+		@browser.visible = false
+		throw :done
+	end
+
 end
 
 
