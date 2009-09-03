@@ -13,6 +13,8 @@ class SeleniumIERecorder
 	def initialize
 		@browser = WIN32OLE.new( 'InternetExplorer.Application' )
 		@browser.visible = true
+
+		@outfile = File.new("selenium_out.txt", 'w+')
 		
 		events = WIN32OLE_EVENT.new( @browser, 'DWebBrowserEvents2' )
 		events.on_event { |*ev_args| eventHandler( *ev_args ) }
@@ -23,13 +25,13 @@ class SeleniumIERecorder
 	def record
 		trap('INT') { puts ""; throw :done }
 		
-		puts header
+		@outfile.puts header
 		catch(:done) do
 			loop do
 				WIN32OLE_EVENT.message_loop
 			end
 		end
-		puts footer
+		@outfile.puts footer
 	end
 
 
@@ -40,7 +42,7 @@ class SeleniumIERecorder
 	def eventHandler(ev_name, *ev_args)
 		if methodExists?(ev_name)
 			method(ev_name).call(*ev_args)
-			puts "-------------------------------------------------" if $DEBUG
+			@outfile.puts "-------------------------------------------------"
 		end
 	end
 
@@ -83,8 +85,8 @@ class SeleniumIERecorder
 
 	# http://msdn.microsoft.com/en-us/library/aa768280(VS.85).aspx
 	def BeforeNavigate2(pDisp, url, flags, targetFrameName, postData, headers, cancel)
-		puts "Navigating to #{url}"
-		puts "\t Target Frame: #{targetFrameName}"
+		@outfile.puts "Navigating to #{url}"
+		@outfile.puts "\t Target Frame: #{targetFrameName}"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768329(VS.85).aspx
@@ -93,22 +95,22 @@ class SeleniumIERecorder
 
 	# http://msdn.microsoft.com/en-us/library/aa768334(VS.85).aspx
 	def NavigateComplete2(pDisp, url)
-		puts "** Navigation to #{url} complete **"
+		@outfile.puts "** Navigation to #{url} complete **"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/bb268221(VS.85).aspx
 	def NavigateError(pDisp, url, targetFrameName, statusCode, cancel)
-		puts "Navigation ERROR occured (#{url}):  Status Code #{statusCode}"
+		@outfile.puts "Navigation ERROR occured (#{url}):  Status Code #{statusCode}"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768336(VS.85).aspx
 	def NewWindow2(ppDisp, cancel)
-		puts "NewWindow2 event fired"
+		@outfile.puts "NewWindow2 event fired"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768337(VS.85).aspx
 	def NewWindow3(ppDisp, cancel, dwFlags, bstrUrlContext, bstrUrl)
-		puts "NewWindow3 event fired"
+		@outfile.puts "NewWindow3 event fired"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/cc136549(VS.85).aspx
@@ -123,17 +125,17 @@ class SeleniumIERecorder
 
 	# http://msdn.microsoft.com/en-us/library/aa768348(VS.85).aspx
 	def PropertyChange(sProperty)
-		puts "Property Changed: #{sProperty}"
+		@outfile.puts "Property Changed: #{sProperty}"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768349(VS.85).aspx
 	def StatusTextChange(sText)
-		puts "Status Text Changed: #{sText}"
+		@outfile.puts "Status Text Changed: #{sText}"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768350(VS.85).aspx
 	def TitleChange(sText)
-		puts "Title changed to #{sText}"
+		@outfile.puts "Title changed to #{sText}"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768358(VS.85).aspx
