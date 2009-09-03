@@ -14,7 +14,11 @@ class SeleniumIERecorder
 		@browser = WIN32OLE.new( 'InternetExplorer.Application' )
 		@browser.visible = true
 
+		@debug = File.new("selenium_debug.txt", 'w+') if $DEBUG
 		@outfile = File.new("selenium_out.txt", 'w+')
+
+		# This variable is checked to see if a statement should be written to the output file
+		@record = true
 		
 		events = WIN32OLE_EVENT.new( @browser, 'DWebBrowserEvents2' )
 		events.on_event { |*ev_args| eventHandler( *ev_args ) }
@@ -42,12 +46,15 @@ class SeleniumIERecorder
 	def eventHandler(ev_name, *ev_args)
 		if methodExists?(ev_name)
 			method(ev_name).call(*ev_args)
-			@outfile.puts "-------------------------------------------------"
+			@debug.puts "-------------------------------------------------" if $DEBUG
 		end
 	end
 
 	# This writes out the Selenium/RDspec statement with an optional code indentation argument.
-	def seleniumStatement(statment, indent=0)
+	def seleniumStatement(statement, indent=1)
+		return(<<-EOS.gsub(/^\t*/, "\t" * indent))
+			#{statement}
+		EOS
 	end
 
 
@@ -85,32 +92,45 @@ class SeleniumIERecorder
 
 	# http://msdn.microsoft.com/en-us/library/aa768280(VS.85).aspx
 	def BeforeNavigate2(pDisp, url, flags, targetFrameName, postData, headers, cancel)
-		@outfile.puts "Navigating to #{url}"
-		@outfile.puts "\t Target Frame: #{targetFrameName}"
+		@debug.puts "Navigating to #{url}" if $DEBUG
+		@debug.puts "\t Target Frame: #{targetFrameName}" if $DEBUG
+		@debug.puts "\t Location URL: #{@browser.LocationURL}" if $DEBUG
+		if @browser.LocationURL == "" and @record then
+			@outfile.puts seleniumStatement("@browser.open(#{url})")
+			@record = false
+		end
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768329(VS.85).aspx
 	def DocumentComplete(pDisp, url)
+		@debug.puts "Document Complete: #{url}" if $DEBUG
+		if url == @browser.LocationURL
+			@record = true
+			# register each frame with an event handler
+			# @browser.Document.frames.length.times do |i|
+			# 	register @browser.Document.frames.item(i)
+			# end
+		end
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768334(VS.85).aspx
 	def NavigateComplete2(pDisp, url)
-		@outfile.puts "** Navigation to #{url} complete **"
+		@debug.puts "** Navigation to #{url} complete **" if $DEBUG
 	end
 
 	# http://msdn.microsoft.com/en-us/library/bb268221(VS.85).aspx
 	def NavigateError(pDisp, url, targetFrameName, statusCode, cancel)
-		@outfile.puts "Navigation ERROR occured (#{url}):  Status Code #{statusCode}"
+		@debug.puts "Navigation ERROR occured (#{url}):  Status Code #{statusCode}" if $DEBUG
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768336(VS.85).aspx
 	def NewWindow2(ppDisp, cancel)
-		@outfile.puts "NewWindow2 event fired"
+		@debug.puts "NewWindow2 event fired" if $DEBUG
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768337(VS.85).aspx
 	def NewWindow3(ppDisp, cancel, dwFlags, bstrUrlContext, bstrUrl)
-		@outfile.puts "NewWindow3 event fired"
+		@debug.puts "NewWindow3 event fired" if $DEBUG
 	end
 
 	# http://msdn.microsoft.com/en-us/library/cc136549(VS.85).aspx
@@ -121,25 +141,27 @@ class SeleniumIERecorder
 
 	# http://msdn.microsoft.com/en-us/library/aa768347(VS.85).aspx
 	def ProgressChange(nProgress, nProgressMax)
+		@debug.puts "Progress Changed: #{nProgress}" if $DEBUG
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768348(VS.85).aspx
 	def PropertyChange(sProperty)
-		@outfile.puts "Property Changed: #{sProperty}"
+		@debug.puts "Property Changed: #{sProperty}" if $DEBUG
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768349(VS.85).aspx
 	def StatusTextChange(sText)
-		@outfile.puts "Status Text Changed: #{sText}"
+		@debug.puts "Status Text Changed: #{sText}" if $DEBUG
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768350(VS.85).aspx
 	def TitleChange(sText)
-		@outfile.puts "Title changed to #{sText}"
+		@debug.puts "Title changed to #{sText}" if $DEBUG
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768358(VS.85).aspx
 	def WindowStateChanged(dwFlags, dwValidFlagsMask)
+		@debug.puts "Window State Changed" if $DEBUG
 	end
 
 end
