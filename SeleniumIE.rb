@@ -1,3 +1,62 @@
+=begin
+-----------------------------------------------------------------------------
+  Copyright © 2009 Dan Wanek <dwanek@nd.gov>
+ 
+ 
+  This file is part of SeleniumIE.
+  
+  SeleniumIE is free software: you can redistribute it and/or
+  modify it under the terms of the GNU General Public License as published
+  by the Free Software Foundation, either version 3 of the License, or (at
+  your option) any later version.
+  
+  SeleniumIE is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+  Public License for more details.
+  
+  You should have received a copy of the GNU General Public License along
+  with SeleniumIE.  If not, see <http://www.gnu.org/licenses/>.
+-----------------------------------------------------------------------------
+
+Original WatirMaker.rb license
+-----------------------------------------------------------------------------
+  This code is heavily inspired by the wonderful WatirMaker.rb program
+  which was originally licensed under the following:
+
+  license
+  ---------------------------------------------------------------------------
+  Copyright (c) 2004-2005, Michael S. Kelly, John Hann, and Scott Hanselman
+  All rights reserved.
+  
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+  
+  1. Redistributions of source code must retain the above copyright notice,
+  this list of conditions and the following disclaimer.
+  
+  2. Redistributions in binary form must reproduce the above copyright
+  notice, this list of conditions and the following disclaimer in the
+  documentation and/or other materials provided with the distribution.
+  
+  3. Neither the names Scott Hanselman, Michael S. Kelly nor the names of 
+  contributors to this software may be used to endorse or promote products 
+  derived from this software without specific prior written permission.
+  
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS
+  IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+  PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR
+  CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+  OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+  OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+  ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  --------------------------------------------------------------------------
+=end
+
 # This program attempts to output Selenium code within RSpec tests that is generated
 # by attaching to a Win32ole Internet Explorer application and listening for events.
 # I hope that this will provide similar functionality for IE that the wonderful
@@ -10,6 +69,8 @@ class SeleniumIERecorder
 	# ========================== Public Methods ========================= 
 	public
 
+	@@top_level_frame_name = ""
+
 	def initialize
 		@browser = WIN32OLE.new( 'InternetExplorer.Application' )
 		@browser.visible = true
@@ -17,8 +78,18 @@ class SeleniumIERecorder
 		@debug = File.new("selenium_debug.txt", 'w+') if $DEBUG
 		@outfile = File.new("selenium_out.txt", 'w+')
 
+		# contains references to all document objects that we're listening to
+		@activeDocuments = Hash.new
+
 		# This variable is checked to see if a statement should be written to the output file
 		@record = true
+		# HACK: tells browser_BeforeNavigate2 method whether or not to insert a goto navigation statement
+		# This is set false when the user clicks something, and reset to true when we get a
+		# DocumentComplete event. This will be problematic if user clicks a button that does not affect
+		# navigation, and then navigates manually.
+		@navigateDirectly = true
+		
+		setDebugLevel(2)
 		
 		events = WIN32OLE_EVENT.new( @browser, 'DWebBrowserEvents2' )
 		events.on_event { |*ev_args| eventHandler( *ev_args ) }
@@ -92,28 +163,73 @@ class SeleniumIERecorder
 
 	# http://msdn.microsoft.com/en-us/library/aa768280(VS.85).aspx
 	def BeforeNavigate2(pDisp, url, flags, targetFrameName, postData, headers, cancel)
-		@debug.puts "Navigating to #{url}" if $DEBUG
-		@debug.puts "\t Target Frame: #{targetFrameName}" if $DEBUG
-		@debug.puts "\t Location URL: #{@browser.LocationURL}" if $DEBUG
-		if @browser.LocationURL == "" and @record then
-			@outfile.puts seleniumStatement("@browser.open(#{url})")
-			@record = false
+		if targetFrameName == @@top_level_frame_name
+			@frameNames = Array.new
+			@navigateDirectly = true
 		end
+		@frameNames << targetFrameName 
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768329(VS.85).aspx
 	def DocumentComplete(pDisp, url)
-		@debug.puts "Document Complete: #{url}" if $DEBUG
-		if url == @browser.LocationURL
-			@record = true
-			# register each frame with an event handler
-			# @browser.Document.frames.length.times do |i|
-			# 	register @browser.Document.frames.item(i)
-			# end
+		begin
+			# Check to see if document is loaded and catch the exception if it occurs.
+			document = pDisp.document
+
+			@debug.puts "************** Document Complete: #{url}" if $DEBUG
+			@debug.puts "LocationURL: #{@browser.LocationURL}" if $DEBUG
+			@debug.puts "URL: #{url}" if $DEBUG
+			if( @record and @browser.LocationURL == url ) then
+				@outfile.puts seleniumStatement("@browser.open(#{url})")
+				@outfile.puts seleniumStatement("@browser.wait_for_page_to_load(30000)")
+				@record = false
+			end
+
+			@frameNames.each do |frameName|
+				if frameName == @@top_level_frame_name then
+					@debug.puts "TOP: #{frameName}" if $DEBUG
+					#document = pDisp.document
+					#@navigateDirectly = true
+				else
+					@debug.puts "FRAME: #{frameName}" if $DEBUG
+				end
+				
+				documentKey = frameName
+				if ( pDisp.Type == "HTML Document"  && !@activeDocuments.has_key?( documentKey ) ) then
+					# create a new document object in the hash
+					@activeDocuments[documentKey] = WIN32OLE_EVENT.new( document, 'HTMLDocumentEvents2' )
+
+					# register event handlers
+					@activeDocuments[documentKey].on_event( 'onclick' ) { |*args| document_onclick( args[0] ) }
+					#@activeDocuments[documentKey].on_event( 'onfocusout' ) { |*args| document_onfocusout( args[0] ) }
+				end
+			end
+ 
+=begin
+				begin
+					pDisp.document.frames.length.times do |i|
+						@debug.puts "FOUND FRAME: #{pDisp.document.frames.item(i).name}" if $DEBUG
+						@debug.puts "FRAME TYPE: #{pDisp.document.frames.item(i).Type}" if $DEBUG
+						#register @browser.Document.frames.item(i)
+					end
+				rescue WIN32OLERuntimeError => e
+					puts "----- ERROR: #{e.to_s} -----"
+					return
+				end
+=end
+#			end
+		rescue WIN32OLERuntimeError => e
+			if e.to_s.match( "nknown property or method `document'" )
+				@debug.puts "Document not yet loaded" if $DEBUG
+				return
+			else
+				raise e
+			end
 		end
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768334(VS.85).aspx
+=begin
 	def NavigateComplete2(pDisp, url)
 		@debug.puts "** Navigation to #{url} complete **" if $DEBUG
 	end
@@ -132,6 +248,7 @@ class SeleniumIERecorder
 	def NewWindow3(ppDisp, cancel, dwFlags, bstrUrlContext, bstrUrl)
 		@debug.puts "NewWindow3 event fired" if $DEBUG
 	end
+=end
 
 	# http://msdn.microsoft.com/en-us/library/cc136549(VS.85).aspx
 	def OnQuit(*ev_args)
@@ -140,31 +257,250 @@ class SeleniumIERecorder
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768347(VS.85).aspx
-	def ProgressChange(nProgress, nProgressMax)
-		@debug.puts "Progress Changed: #{nProgress}" if $DEBUG
-	end
+	#def ProgressChange(nProgress, nProgressMax)
+	#	@debug.puts "Progress Changed: #{nProgress}" if $DEBUG
+	#end
 
 	# http://msdn.microsoft.com/en-us/library/aa768348(VS.85).aspx
-	def PropertyChange(sProperty)
-		@debug.puts "Property Changed: #{sProperty}" if $DEBUG
-	end
+	#def PropertyChange(sProperty)
+	#	@debug.puts "Property Changed: #{sProperty}" if $DEBUG
+	#end
 
 	# http://msdn.microsoft.com/en-us/library/aa768349(VS.85).aspx
-	def StatusTextChange(sText)
-		@debug.puts "Status Text Changed: #{sText}" if $DEBUG
-	end
+	#def StatusTextChange(sText)
+		#@debug.puts "Status Text Changed: #{sText}" if $DEBUG
+	#end
 
 	# http://msdn.microsoft.com/en-us/library/aa768350(VS.85).aspx
-	def TitleChange(sText)
-		@debug.puts "Title changed to #{sText}" if $DEBUG
-	end
+	#def TitleChange(sText)
+	#	@debug.puts "Title changed to #{sText}" if $DEBUG
+	#end
 
 	# http://msdn.microsoft.com/en-us/library/aa768358(VS.85).aspx
-	def WindowStateChanged(dwFlags, dwValidFlagsMask)
-		@debug.puts "Window State Changed" if $DEBUG
+	#def WindowStateChanged(dwFlags, dwValidFlagsMask)
+	#	@debug.puts "Window State Changed" if $DEBUG
+	#end
+
+	# ---------------------- methods from WatirMaker ---------------
+	#
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	##
+	## Handles document onclick events.
+	##
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	def document_onclick( eventObj )
+		# if the user clicked something and the URL chandes as a result, it's probably due to this...
+		@navigateDirectly = false
+		
+		case eventObj.srcElement.tagName
+		when "INPUT", "A", "SPAN", "IMG", "TD"
+			@outfile.puts writeWatirStatement( eventObj, "click" )           
+		else
+			how, what = getHowWhat( eventObj.srcElement )
+			printDebugComment( "Unsupported onclick tagname " + eventObj.srcElement.tagName +
+							  " (" + how + ", '" + what + "')" )
+		end
 	end
 
-end
+
+	def getHowWhat( element )
+		if element.getAttribute( "id" ) != nil && element.getAttribute( "id" ) != ""
+			return ":id", element.getAttribute( "id" )
+		elsif element.getAttribute( "name" ) != nil && element.getAttribute( "name" ) != ""
+			return ":name", element.getAttribute( "name" )
+		else
+			#printDebugComment(element.tagName)
+			case element.tagName
+			when "A"
+				return ":text", %Q{#{element.innerText}}
+			else
+				#return the index of this element in the 'all' collection as a string
+				index = element.sourceIndex
+				if index != nil
+					return ":index", %Q{#{index}}
+				end
+			end
+		end
+	end
+
+
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	##
+	## Generates a line of WATIR script based on the HTML element and the action to take.
+	##
+	## element: The IE HTML element to perform the action on.
+	## action:  The WATIR action to perform on said element.
+	## value:   The value to assign to the element (required for 'set' and 'select' actions)
+	##
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	def writeWatirStatement( eventObj, action, value = "" )
+		str = ""
+		element = eventObj.srcElement
+		if element == nil
+			printDebugComment "writeWatirStatement eventObj.srcElement was nil!"
+			return str
+		end
+		
+		# if we're trasitioning between frames, insert a delay statement
+		if @lastFrameName != element.document.parentWindow.name
+			# TODO: How do we do a Thread.Wait() in Ruby?
+		end
+		
+		case element.tagName
+		when "INPUT"
+			case element.getAttribute( "type" )
+			when "submit", "image", "button"
+				if action == "click"
+					str = genWatirAccessor( "button", element ) + action
+				end
+			when "text", "password"
+				if action == "set"
+					str = genWatirAccessor( "text_field", element ) + action + "( '" +  element.value + "' )"
+				end
+			when "checkbox"
+				if action == "set" || action == "clear"
+					str = genWatirAccessor( "checkbox", element ) + action
+				end
+			when "radio"
+				if action == "set" || action == "clear"
+					str = genWatirAccessor( "radio", element ) + action
+				end
+			else
+				how, what = getHowWhat( eventObj.srcElement )
+				printDebugComment( "Unsupported INPUT type " + element.getAttribute( "type" ) +
+								  " (" + how + ", '" + what + "')" )
+			end
+		when "A"
+			if action == "click"
+				str = genWatirAccessor( "link", element ) + action
+			end
+		when "SPAN"
+			if action == "click"
+				str = genWatirAccessor( "span", element ) + action
+			end
+		when "IMG"
+			if action == "click"
+				str = genWatirAccessor( "image", element ) + action
+			end
+		when "TD"
+			if action == "click"
+				how, what = getHowWhat( element )
+				str = genIePrefix( element ) + "document.all[ '" + what + "' ].click"
+			end
+		when "SELECT"
+			if action == "select"
+				for i in 0..element.options.length-1
+					if element.options[ %Q{#{i}} ].selected
+						str += genWatirAccessor( "select_list", element ) + action + "( '" + \
+						element.options[ %Q{#{i}} ].text + "' )\n"
+					end
+				end
+			end
+		else
+			how, what = getHowWhat( eventObj.srcElement )
+			printDebugComment( "Unsupported onclick tagname " + eventObj.srcElement.tagName +
+							  " (" + how + ", '" + what + "')" )
+		end
+		
+		if str != ""
+			@lastFrameName = element.document.parentWindow.name
+		else
+			printDebugComment "Unsupported action '" + action + "' for '" + element.tagName + "'."
+		end
+		return str
+	end
+ 
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	##
+	## Generates the WATIR code necessary for accessing a particular document element.
+	##
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	def genWatirAccessor( watirType, element )
+		iePrefix = genIePrefix( element )
+		how, what = getHowWhat( element )
+		
+		# for some reason the index 'How' doesn't work for the index we get from our code
+		if how == ":index"
+			return iePrefix + "document.all[ '" + what + "' ]."
+		elsif how == ":id"
+			if what.include? "_"
+				what = what[what.rindex("_") + 1,what.length - what.rindex("_")]
+				what = "/" + what + "$/"
+			else
+				what = "'" + what + "'"
+			end
+			return iePrefix + watirType + "( " + how + ", " + what + " )."
+		else
+			return iePrefix + watirType + "( " + how + ", '" + what + "' )."
+		end
+	end
+ 
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	##
+	## Generates the ie prefix necessary for accessing a particular document element, including frames.
+	##
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	def genIePrefix( element )
+		printDebugComment("genIePrefix")
+		parentWindowName = element.document.parentWindow.name
+		if parentWindowName != @@top_level_frame_name
+			return "@browser.frame( :name, '" + parentWindowName + "' )."
+		else
+			return "@browser."
+		end
+	end
+
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	##
+	## Print warning comment.
+	##
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	def printWarningComment( warning )
+		if @printWarnings
+			puts ""
+			puts "# WARNING: '" + warning
+			puts ""
+		end
+	end
+
+
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	##
+	## Print a debug message comment.
+	##
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	def printDebugComment( message )
+		if @printDebugInfo
+			puts "# DEBUG: " + message
+		end
+	end
+
+
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	##
+	## Print comment showing the page navigated to.
+	##
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	def printNavigateComment( url, frameName )
+		puts ""
+		puts "# frame loading: '" + frameName + "'" if frameName != nil
+		puts "# navigating to: '" + url + "'"
+		puts ""
+	end
+	
+	def setDebugLevel(level)
+		if level >= 2
+			@printDebugInfo = true
+		else
+			@printDebugInfo = false			
+		end
+		if level >= 1
+			@printWarnings = true
+		else
+			@printWarnings = false
+		end
+   end
+end  # class SeleniumIERecorder
 
 
 recorder = SeleniumIERecorder.new
