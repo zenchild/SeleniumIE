@@ -83,12 +83,10 @@ class SeleniumIERecorder
 
 		# This variable is checked to see if a statement should be written to the output file
 		@record = true
-		# HACK: tells browser_BeforeNavigate2 method whether or not to insert a goto navigation statement
-		# This is set false when the user clicks something, and reset to true when we get a
-		# DocumentComplete event. This will be problematic if user clicks a button that does not affect
-		# navigation, and then navigates manually.
-		@navigateDirectly = true
 		
+		# stores the last frame name      
+		@lastFrameName = ""
+
 		setDebugLevel(2)
 		
 		events = WIN32OLE_EVENT.new( @browser, 'DWebBrowserEvents2' )
@@ -165,7 +163,6 @@ class SeleniumIERecorder
 	def BeforeNavigate2(pDisp, url, flags, targetFrameName, postData, headers, cancel)
 		if targetFrameName == @@top_level_frame_name
 			@frameNames = Array.new
-			@navigateDirectly = true
 		end
 		@frameNames << targetFrameName 
 	end
@@ -180,16 +177,16 @@ class SeleniumIERecorder
 			@debug.puts "LocationURL: #{@browser.LocationURL}" if $DEBUG
 			@debug.puts "URL: #{url}" if $DEBUG
 			if( @record and @browser.LocationURL == url ) then
-				@outfile.puts seleniumStatement("@browser.open(#{url})")
+				@outfile.puts seleniumStatement("@browser.open(\"#{url}\")")
 				@outfile.puts seleniumStatement("@browser.wait_for_page_to_load(30000)")
 				@record = false
 			end
+			
 
 			@frameNames.each do |frameName|
 				if frameName == @@top_level_frame_name then
 					@debug.puts "TOP: #{frameName}" if $DEBUG
 					#document = pDisp.document
-					#@navigateDirectly = true
 				else
 					@debug.puts "FRAME: #{frameName}" if $DEBUG
 				end
@@ -200,24 +197,13 @@ class SeleniumIERecorder
 					@activeDocuments[documentKey] = WIN32OLE_EVENT.new( document, 'HTMLDocumentEvents2' )
 
 					# register event handlers
+					@debug.puts "Adding document handler for '#{documentKey}'" if $DEBUG
 					@activeDocuments[documentKey].on_event( 'onclick' ) { |*args| document_onclick( args[0] ) }
-					#@activeDocuments[documentKey].on_event( 'onfocusout' ) { |*args| document_onfocusout( args[0] ) }
+					@activeDocuments[documentKey].on_event( 'onfocusout' ) { |*args| document_onfocusout( args[0] ) }
+					@activeDocuments[documentKey].on_event( 'onsubmit' ) { |*args| document_onsubmit( args[0] ) }
 				end
 			end
  
-=begin
-				begin
-					pDisp.document.frames.length.times do |i|
-						@debug.puts "FOUND FRAME: #{pDisp.document.frames.item(i).name}" if $DEBUG
-						@debug.puts "FRAME TYPE: #{pDisp.document.frames.item(i).Type}" if $DEBUG
-						#register @browser.Document.frames.item(i)
-					end
-				rescue WIN32OLERuntimeError => e
-					puts "----- ERROR: #{e.to_s} -----"
-					return
-				end
-=end
-#			end
 		rescue WIN32OLERuntimeError => e
 			if e.to_s.match( "nknown property or method `document'" )
 				@debug.puts "Document not yet loaded" if $DEBUG
@@ -280,6 +266,22 @@ class SeleniumIERecorder
 	#def WindowStateChanged(dwFlags, dwValidFlagsMask)
 	#	@debug.puts "Window State Changed" if $DEBUG
 	#end
+	
+	def document_onsubmit (eventObj)
+		printDebugComment( "Submitting Form:  " + eventObj.srcElement.tagName)
+	end
+	
+	def get_form_input (form)
+		form.all.length.times do |i|
+			elem = form.all.item(i)
+			if elem.tagName == "INPUT"
+				printDebugComment( "Getting Form Input Tag/Type: #{elem.tagName}, #{elem.Type} " )
+				if elem.Type == "text" or elem.Type == "password"
+					@outfile.puts seleniumStatement( "@browser.type \"#{ getXpath(elem) }\", \"#{elem.Value}\"" )
+				end
+			end
+		end
+	end
 
 	# ---------------------- methods from WatirMaker ---------------
 	#
@@ -290,16 +292,92 @@ class SeleniumIERecorder
 	##//////////////////////////////////////////////////////////////////////////////////////////////////
 	def document_onclick( eventObj )
 		# if the user clicked something and the URL chandes as a result, it's probably due to this...
-		@navigateDirectly = false
 		
 		case eventObj.srcElement.tagName
 		when "INPUT", "A", "SPAN", "IMG", "TD"
-			@outfile.puts writeWatirStatement( eventObj, "click" )           
+			#@outfile.puts writeWatirStatement( eventObj, "click" )           
+			get_form_input (eventObj.srcElement.form)
+
+			@outfile.puts seleniumStatement( "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page" )           
 		else
 			how, what = getHowWhat( eventObj.srcElement )
 			printDebugComment( "Unsupported onclick tagname " + eventObj.srcElement.tagName +
 							  " (" + how + ", '" + what + "')" )
 		end
+	end
+
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	##
+	## Print Watir statement for onfocusout events.
+	##
+	##//////////////////////////////////////////////////////////////////////////////////////////////////
+	def document_onfocusout( eventObj ) 
+		case eventObj.srcElement.tagName
+		when "INPUT"
+			case eventObj.srcElement.getAttribute( "type" )
+			when "text", "password"
+				printDebugComment("In OnFocusOut: TEXT/PASS: #{eventObj.srcElement.tagName}")
+				@outfile.puts writeWatirStatement( eventObj, "set", eventObj.srcElement.value )
+			when "checkbox"
+				printDebugComment("In OnFocusOut: CHECKBOX")
+				if eventObj.srcElement.checked
+					@outfile.puts writeWatirStatement( eventObj, "set" )
+				else
+					@outfile.puts writeWatirStatement( eventObj, "clear" )
+				end
+			else
+				printDebugComment( "Unsupported onfocusout INPUT type " + \
+								  eventObj.srcElement.getAttribute( "type" ))
+			end
+		when "SELECT"
+			@outfile.puts writeWatirStatement( eventObj, "select", eventObj.srcElement.value )
+		else
+			how, what = getHowWhat( eventObj.srcElement )
+			printDebugComment( "Unsupported onfocusout tagname " + eventObj.srcElement.tagName + " (" + how + ", '" + what + "')" )
+		end
+	end
+
+
+	def get_tag_with_id (element)
+		return("#{element.tagName.downcase}[@id='#{element.Id}']")
+	end
+
+	def get_tag_with_name (element)
+		return("#{element.tagName.downcase}[@name='#{element.Name}']")
+	end
+
+	def get_tag (element)
+		return(element.tagName.downcase)
+	end
+	
+	def getXpath (element)
+		xpath = []
+
+		i = 0
+		# Set the max times to loop.  This should be plenty to get a unique XPATH object
+		maxloop = 4
+		while i < maxloop and element != nil
+			case element.ole_obj_help.to_s
+			when "DispHTMLDivElement", "DispHTMLFormElement", "DispHTMLAnchorElement", "DispHTMLInputElement", "DispHTMLTable"
+				xpath.unshift(get_tag_with_id(element))
+			when "DispHTMLTableRow"
+				xpath.unshift("#{get_tag(element)}[#{element.rowIndex+1}]")
+			when "DispHTMLTableCell"
+				xpath.unshift("#{get_tag(element)}[#{element.cellIndex+1}]")
+			when "DispHTMLLIElement"
+				xpath.unshift("#{get_tag(element)}[#{element.value}]")
+			when "DispHTMLHtmlElement", "DispHTMLBody", "DispHTMLHeaderElement", "DispHTMLTableSection", "DispHTMLOListElement"
+				xpath.unshift(get_tag(element))
+			else
+				printDebugComment("Unhandled XPATH element Type: #{element.ole_obj_help}")
+				xpath.unshift("*")
+			end
+
+			i+=1
+			element = element.parentNode
+		end
+
+		return "//" + xpath.join("/")
 	end
 
 
