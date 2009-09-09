@@ -87,6 +87,8 @@ class SeleniumIERecorder
 		# stores the last frame name      
 		@lastFrameName = ""
 
+		@mouse_clicked = false
+
 		setDebugLevel(2)
 		
 		events = WIN32OLE_EVENT.new( @browser, 'DWebBrowserEvents2' )
@@ -113,9 +115,9 @@ class SeleniumIERecorder
 
 	# eventHandler is the dispatcher for all incoming events.
 	def eventHandler(ev_name, *ev_args)
+		#puts "------------------- #{ev_name} ---------------------"
 		if methodExists?(ev_name)
 			method(ev_name).call(*ev_args)
-			@debug.puts "-------------------------------------------------" if $DEBUG
 		end
 	end
 
@@ -179,16 +181,23 @@ class SeleniumIERecorder
 			if( @record and @browser.LocationURL == url ) then
 				@outfile.puts seleniumStatement("@browser.open(\"#{url}\")")
 				@outfile.puts seleniumStatement("@browser.wait_for_page_to_load(30000)")
-				@record = false
+				#@record = false
 			end
-			
 
+			
 			@frameNames.each do |frameName|
 				if frameName == @@top_level_frame_name then
 					@debug.puts "TOP: #{frameName}" if $DEBUG
-					#document = pDisp.document
+					document = pDisp.document
 				else
 					@debug.puts "FRAME: #{frameName}" if $DEBUG
+					document = pDisp.document.frames[frameName].document
+				end
+				
+				forms = document.forms
+				forms.length.times do |i|
+					puts "======= ADDING FROM SUBMIT ========="
+					forms.item(i).onsubmit = method("form_onsubmit")
 				end
 				
 				documentKey = frameName
@@ -199,8 +208,8 @@ class SeleniumIERecorder
 					# register event handlers
 					@debug.puts "Adding document handler for '#{documentKey}'" if $DEBUG
 					@activeDocuments[documentKey].on_event( 'onclick' ) { |*args| document_onclick( args[0] ) }
-					@activeDocuments[documentKey].on_event( 'onfocusout' ) { |*args| document_onfocusout( args[0] ) }
-					@activeDocuments[documentKey].on_event( 'onsubmit' ) { |*args| document_onsubmit( args[0] ) }
+					#@activeDocuments[documentKey].on_event( 'onfocusout' ) { |*args| document_onfocusout( args[0] ) }
+					#@activeDocuments[documentKey].on_event( nil ) { |*args| document_allevents( *args ) }
 				end
 			end
  
@@ -212,6 +221,17 @@ class SeleniumIERecorder
 				raise e
 			end
 		end
+	end
+
+	def form_onsubmit()
+		form = @browser.Document.activeElement.form
+		puts "***** ACCCCCCCCCCCCT #{ @browser.Document.activeElement.tagName }"
+		if @browser.Document.activeElement.tagName == "INPUT"
+			puts "***** ACCCCCCCCCCCCT #{ @browser.Document.activeElement.Type }"
+		end
+		puts "***** ACCCCCCCCCCCCT #{ @browser.Document.activeElement.Id }"
+		get_form_input( form )
+		@outfile.puts seleniumStatement( "@browser.submit \"#{ getXpath(form) }\"" ) unless @mouse_clicked
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768334(VS.85).aspx
@@ -267,10 +287,75 @@ class SeleniumIERecorder
 	#	@debug.puts "Window State Changed" if $DEBUG
 	#end
 	
-	def document_onsubmit (eventObj)
-		printDebugComment( "Submitting Form:  " + eventObj.srcElement.tagName)
+
+	def document_allevents ( *args )
+		case args[0]
+		when /^onactivate/
+		when /^ondeactivate/
+			puts "*** DEACTIVATE *** ELEM TAG: #{args[1].srcElement.tagName}"
+			elem = args[1].srcElement
+			if elem.tagName == "INPUT"
+				case elem.Type
+				when "text", "password"
+					if elem.Value != ""
+						@outfile.puts seleniumStatement( "@browser.type \"#{ getXpath(elem) }\", \"#{elem.Value}\"" )
+					end
+				end
+
+			else
+				puts "\tTAG: #{elem.tagName}"
+			end
+
+		when /^onkeyup/
+			puts "*** KEYUP *** KEYCODE: #{args[1].getAttribute('keyCode')}"
+			elem = args[1].srcElement
+			if elem.tagName == "INPUT"
+				puts "INPUT => #{elem.Type}"
+			else
+				puts "TAG: #{elem.tagName}"
+			end
+		when /^onkeydown/
+			puts "*** KEYDOWN *** KEYCODE: #{args[1].getAttribute('keyCode')}"
+		when /^onkeypress/
+			puts "*** KEYPRESS *** KEYCODE: #{args[1].getAttribute('keyCode')}"
+		when /^onfocusout/
+			puts "*** FOCUS OUT *** ELEM TAG: #{args[1].srcElement.tagName}"
+		when /^onclick/
+			case args[1].srcElement.tagName
+			when "INPUT", "BUTTON"
+				puts "*** CLICK *** INPUT: #{args[1].srcElement.Type}"
+				case args[1].srcElement.Type
+				when "submit", "image", "button"
+					# The assumption here is that if the element is not tied to a form the page probably won't reload.
+					if args[1].srcElement.form == nil
+						str = "@browser.click \"#{getXpath(args[1].srcElement)}\""
+					else
+						str = "@browser.click \"#{getXpath(args[1].srcElement)}\", :wait_for => :page"
+					end
+					@outfile.puts seleniumStatement( str )
+				end
+
+			when "A", "SPAN", "IMG", "TD"
+				str = "@browser.click \"#{getXpath(args[1].srcElement)}\""
+				@outfile.puts seleniumStatement( str )
+			else
+				puts "*** CLICK *** INPUT: #{args[1].srcElement.tagName}"
+			end
+			@mouse_clicked = false
+		when "onmouseup"
+			if args[1].srcElement.tagName == "INPUT"
+				case args[1].srcElement.Type
+				when "submit", "image", "button"
+					@mouse_clicked = true
+				end
+			end
+		when /^onmouse[mdo]/
+			# ingnore onmouse.* events
+		else
+			puts "UH: *** #{args[0].upcase} *** "
+		end
 	end
-	
+
 	def get_form_input (form)
 		form.all.length.times do |i|
 			elem = form.all.item(i)
@@ -294,15 +379,13 @@ class SeleniumIERecorder
 		# if the user clicked something and the URL chandes as a result, it's probably due to this...
 		
 		case eventObj.srcElement.tagName
-		when "INPUT", "A", "SPAN", "IMG", "TD"
-			#@outfile.puts writeWatirStatement( eventObj, "click" )           
+		when "INPUT"
 			get_form_input (eventObj.srcElement.form)
-
+			@outfile.puts seleniumStatement( "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page" )           
+		when "BUTTON", "A", "SPAN", "IMG", "TD"
 			@outfile.puts seleniumStatement( "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page" )           
 		else
-			how, what = getHowWhat( eventObj.srcElement )
-			printDebugComment( "Unsupported onclick tagname " + eventObj.srcElement.tagName +
-							  " (" + how + ", '" + what + "')" )
+			printDebugComment( "Unsupported onclick tagname " + eventObj.srcElement.tagName )
 		end
 	end
 
@@ -358,7 +441,7 @@ class SeleniumIERecorder
 		maxloop = 4
 		while i < maxloop and element != nil
 			case element.ole_obj_help.to_s
-			when "DispHTMLDivElement", "DispHTMLFormElement", "DispHTMLAnchorElement", "DispHTMLInputElement", "DispHTMLTable"
+			when "DispHTMLDivElement", "DispHTMLFormElement", "DispHTMLAnchorElement", "DispHTMLInputElement", "DispHTMLButtonElement", "DispHTMLTable"
 				xpath.unshift(get_tag_with_id(element))
 			when "DispHTMLTableRow"
 				xpath.unshift("#{get_tag(element)}[#{element.rowIndex+1}]")
@@ -366,10 +449,13 @@ class SeleniumIERecorder
 				xpath.unshift("#{get_tag(element)}[#{element.cellIndex+1}]")
 			when "DispHTMLLIElement"
 				xpath.unshift("#{get_tag(element)}[#{element.value}]")
-			when "DispHTMLHtmlElement", "DispHTMLBody", "DispHTMLHeaderElement", "DispHTMLTableSection", "DispHTMLOListElement"
+			when "DispHTMLHtmlElement", "DispHTMLBody", "DispHTMLHeaderElement", "DispHTMLTableSection", "DispHTMLOListElement", "DispHTMLParaElement", "DispHTMLPhraseElement"
 				xpath.unshift(get_tag(element))
+			when "DispHTMLDocument", 
+				# End of the road
+				i = maxloop
 			else
-				printDebugComment("Unhandled XPATH element Type: #{element.ole_obj_help}")
+				printDebugComment("Unhandled XPATH element Type: #{element.ole_obj_help}  TAG: #{element.tagName} ")
 				xpath.unshift("*")
 			end
 
@@ -377,7 +463,8 @@ class SeleniumIERecorder
 			element = element.parentNode
 		end
 
-		return "//" + xpath.join("/")
+
+		return '//' + xpath.join('/')
 	end
 
 
