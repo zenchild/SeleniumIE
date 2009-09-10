@@ -75,19 +75,24 @@ class SeleniumIERecorder
 		@browser = WIN32OLE.new( 'InternetExplorer.Application' )
 		@browser.visible = true
 
-		@debug = File.new("selenium_debug.txt", 'w+') if $DEBUG
+		@debugfile = File.new("selenium_debug.txt", 'w+')
 		@outfile = File.new("selenium_out.txt", 'w+')
 
 		# contains references to all document objects that we're listening to
 		@activeDocuments = Hash.new
 
-		# This variable is checked to see if a statement should be written to the output file
-		@record = true
-		
 		# stores the last frame name      
 		@lastFrameName = ""
 
 		@mouse_clicked = false
+
+		# Keep track of what RSPEC test case we are on
+		@test_case = 1
+
+		# This is set by the WindowStateChange event to determine if we should add an "open" statement or
+		# just use the mouse click navigation.  This event doesn't directly coorespond to a manual URL entry
+		# but for most intents and purposes of recording a transaction it should work fine.
+		@navigate_directly = true
 
 		setDebugLevel(2)
 		
@@ -115,17 +120,25 @@ class SeleniumIERecorder
 
 	# eventHandler is the dispatcher for all incoming events.
 	def eventHandler(ev_name, *ev_args)
-		#puts "------------------- #{ev_name} ---------------------"
+		printDebugComment "------------------- #{ev_name} ---------------------"
 		if methodExists?(ev_name)
 			method(ev_name).call(*ev_args)
 		end
 	end
 
 	# This writes out the Selenium/RDspec statement with an optional code indentation argument.
-	def seleniumStatement(statement, indent=1)
+	def seleniumStatement(statement, indent=2)
 		return(<<-EOS.gsub(/^\t*/, "\t" * indent))
 			#{statement}
 		EOS
+	end
+
+	def rspec_begin(descriptor="this is test case #{test_case}")
+		seleniumStatement("it \"descriptor\" do",1)
+	end
+
+	def rspec_end()
+		seleniumStatement("end",1)
 	end
 
 
@@ -175,28 +188,28 @@ class SeleniumIERecorder
 			# Check to see if document is loaded and catch the exception if it occurs.
 			document = pDisp.document
 
-			@debug.puts "************** Document Complete: #{url}" if $DEBUG
-			@debug.puts "LocationURL: #{@browser.LocationURL}" if $DEBUG
-			@debug.puts "URL: #{url}" if $DEBUG
-			if( @record and @browser.LocationURL == url ) then
+			printDebugComment "************** Document Complete: #{url}"
+			printDebugComment "LocationURL: #{@browser.LocationURL}"
+			printDebugComment "URL: #{url}"
+			#if( @navigate_directly && @browser.LocationURL == url ) then
+			if( @navigate_directly ) then
 				@outfile.puts seleniumStatement("@browser.open(\"#{url}\")")
 				@outfile.puts seleniumStatement("@browser.wait_for_page_to_load(30000)")
-				#@record = false
+				@navigate_directly = false
 			end
 
 			
 			@frameNames.each do |frameName|
 				if frameName == @@top_level_frame_name then
-					@debug.puts "TOP: #{frameName}" if $DEBUG
+					printDebugComment "TOP: #{frameName}"
 					document = pDisp.document
 				else
-					@debug.puts "FRAME: #{frameName}" if $DEBUG
+					printDebugComment "FRAME: #{frameName}"
 					document = pDisp.document.frames[frameName].document
 				end
 				
 				forms = document.forms
 				forms.length.times do |i|
-					puts "======= ADDING FROM SUBMIT ========="
 					forms.item(i).onsubmit = method("form_onsubmit")
 				end
 				
@@ -206,16 +219,18 @@ class SeleniumIERecorder
 					@activeDocuments[documentKey] = WIN32OLE_EVENT.new( document, 'HTMLDocumentEvents2' )
 
 					# register event handlers
-					@debug.puts "Adding document handler for '#{documentKey}'" if $DEBUG
+					printDebugComment "Adding document handler for '#{documentKey}'"
 					@activeDocuments[documentKey].on_event( 'onclick' ) { |*args| document_onclick( args[0] ) }
-					#@activeDocuments[documentKey].on_event( 'onfocusout' ) { |*args| document_onfocusout( args[0] ) }
 					#@activeDocuments[documentKey].on_event( nil ) { |*args| document_allevents( *args ) }
 				end
 			end
  
 		rescue WIN32OLERuntimeError => e
-			if e.to_s.match( "nknown property or method `document'" )
-				@debug.puts "Document not yet loaded" if $DEBUG
+			if e.to_s.match( "nknown property or method" )
+				printDebugComment "Document not yet loaded"
+				return
+			elsif e.to_s.match( "Access is denied" )
+				printDebugComment "Method access denied"
 				return
 			else
 				raise e
@@ -237,22 +252,22 @@ class SeleniumIERecorder
 	# http://msdn.microsoft.com/en-us/library/aa768334(VS.85).aspx
 =begin
 	def NavigateComplete2(pDisp, url)
-		@debug.puts "** Navigation to #{url} complete **" if $DEBUG
+		printDebugComment "** Navigation to #{url} complete **"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/bb268221(VS.85).aspx
 	def NavigateError(pDisp, url, targetFrameName, statusCode, cancel)
-		@debug.puts "Navigation ERROR occured (#{url}):  Status Code #{statusCode}" if $DEBUG
+		printDebugComment "Navigation ERROR occured (#{url}):  Status Code #{statusCode}"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768336(VS.85).aspx
 	def NewWindow2(ppDisp, cancel)
-		@debug.puts "NewWindow2 event fired" if $DEBUG
+		printDebugComment "NewWindow2 event fired"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768337(VS.85).aspx
 	def NewWindow3(ppDisp, cancel, dwFlags, bstrUrlContext, bstrUrl)
-		@debug.puts "NewWindow3 event fired" if $DEBUG
+		printDebugComment "NewWindow3 event fired"
 	end
 =end
 
@@ -264,28 +279,39 @@ class SeleniumIERecorder
 
 	# http://msdn.microsoft.com/en-us/library/aa768347(VS.85).aspx
 	#def ProgressChange(nProgress, nProgressMax)
-	#	@debug.puts "Progress Changed: #{nProgress}" if $DEBUG
+	#	printDebugComment "Progress Changed: #{nProgress}"
 	#end
 
 	# http://msdn.microsoft.com/en-us/library/aa768348(VS.85).aspx
-	#def PropertyChange(sProperty)
-	#	@debug.puts "Property Changed: #{sProperty}" if $DEBUG
-	#end
+=begin
+	def PropertyChange(sProperty)
+		printDebugComment "Property Changed: #{sProperty}"
+		prop = @browser.GetProperty(sProperty)
+		if prop != nil
+			printDebugComment "\tPROP: #{prop.class.to_s}"
+			printDebugComment "\tPROP: #{prop}"
+			printDebugComment "\tPROP: #{str}"
+		end
+	end
+=end
 
 	# http://msdn.microsoft.com/en-us/library/aa768349(VS.85).aspx
 	#def StatusTextChange(sText)
-		#@debug.puts "Status Text Changed: #{sText}" if $DEBUG
+		#printDebugComment "Status Text Changed: #{sText}"
 	#end
 
 	# http://msdn.microsoft.com/en-us/library/aa768350(VS.85).aspx
 	#def TitleChange(sText)
-	#	@debug.puts "Title changed to #{sText}" if $DEBUG
+	#	printDebugComment "Title changed to #{sText}"
 	#end
 
 	# http://msdn.microsoft.com/en-us/library/aa768358(VS.85).aspx
-	#def WindowStateChanged(dwFlags, dwValidFlagsMask)
-	#	@debug.puts "Window State Changed" if $DEBUG
-	#end
+	def WindowStateChanged(dwFlags, dwValidFlagsMask)
+		printDebugComment( "Window State Changed: FLAGS: #{dwFlags}  MASK: #{dwValidFlagsMask}" )
+		if dwFlags == 3 and dwValidFlagsMask == 3 then
+			@navigate_directly = true
+		end
+	end
 	
 
 	def document_allevents ( *args )
@@ -379,50 +405,27 @@ class SeleniumIERecorder
 		# if the user clicked something and the URL chandes as a result, it's probably due to this...
 		
 		case eventObj.srcElement.tagName
-		when "INPUT"
-			get_form_input (eventObj.srcElement.form)
+		when "INPUT", "A"
+			if eventObj.srcElement.getAttribute('form') != nil then
+				get_form_input(eventObj.srcElement.getAttribute('form'))
+			end
 			@outfile.puts seleniumStatement( "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page" )           
-		when "BUTTON", "A", "SPAN", "IMG", "TD"
-			@outfile.puts seleniumStatement( "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page" )           
+		when "BUTTON", "SPAN", "IMG", "TD"
+			if eventObj.srcElement.getAttribute('form') == nil
+				str = "@browser.click \"#{getXpath(eventObj.srcElement)}\""
+			else
+				str = "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page"
+			end
+			@outfile.puts seleniumStatement( str )
 		else
 			printDebugComment( "Unsupported onclick tagname " + eventObj.srcElement.tagName )
 		end
 	end
 
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	##
-	## Print Watir statement for onfocusout events.
-	##
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	def document_onfocusout( eventObj ) 
-		case eventObj.srcElement.tagName
-		when "INPUT"
-			case eventObj.srcElement.getAttribute( "type" )
-			when "text", "password"
-				printDebugComment("In OnFocusOut: TEXT/PASS: #{eventObj.srcElement.tagName}")
-				@outfile.puts writeWatirStatement( eventObj, "set", eventObj.srcElement.value )
-			when "checkbox"
-				printDebugComment("In OnFocusOut: CHECKBOX")
-				if eventObj.srcElement.checked
-					@outfile.puts writeWatirStatement( eventObj, "set" )
-				else
-					@outfile.puts writeWatirStatement( eventObj, "clear" )
-				end
-			else
-				printDebugComment( "Unsupported onfocusout INPUT type " + \
-								  eventObj.srcElement.getAttribute( "type" ))
-			end
-		when "SELECT"
-			@outfile.puts writeWatirStatement( eventObj, "select", eventObj.srcElement.value )
-		else
-			how, what = getHowWhat( eventObj.srcElement )
-			printDebugComment( "Unsupported onfocusout tagname " + eventObj.srcElement.tagName + " (" + how + ", '" + what + "')" )
-		end
-	end
-
 
 	def get_tag_with_id (element)
-		return("#{element.tagName.downcase}[@id='#{element.Id}']")
+		elem_id = element.Id
+		return( "#{element.tagName.downcase}" + ((elem_id != "") ? "[@id='#{elem_id}']" : "") )
 	end
 
 	def get_tag_with_name (element)
@@ -438,25 +441,45 @@ class SeleniumIERecorder
 
 		i = 0
 		# Set the max times to loop.  This should be plenty to get a unique XPATH object
-		maxloop = 4
+		maxloop = 6
 		while i < maxloop and element != nil
 			case element.ole_obj_help.to_s
-			when "DispHTMLDivElement", "DispHTMLFormElement", "DispHTMLAnchorElement", "DispHTMLInputElement", "DispHTMLButtonElement", "DispHTMLTable"
+			when "DispHTMLDivElement", "DispHTMLFormElement", "DispHTMLInputElement", "DispHTMLButtonElement", "DispHTMLTable"
 				xpath.unshift(get_tag_with_id(element))
 			when "DispHTMLTableRow"
-				xpath.unshift("#{get_tag(element)}[#{element.rowIndex+1}]")
+				xpath.unshift("#{get_tag(element)}[#{element.sectionRowIndex+1}]")
 			when "DispHTMLTableCell"
 				xpath.unshift("#{get_tag(element)}[#{element.cellIndex+1}]")
 			when "DispHTMLLIElement"
-				xpath.unshift("#{get_tag(element)}[#{element.value}]")
-			when "DispHTMLHtmlElement", "DispHTMLBody", "DispHTMLHeaderElement", "DispHTMLTableSection", "DispHTMLOListElement", "DispHTMLParaElement", "DispHTMLPhraseElement"
+				xpath.unshift("#{get_tag(element)}[#{element.value + 1}]")
+			when "DispHTMLHtmlElement", "DispHTMLBody", "DispHTMLHeaderElement", "DispHTMLTableSection", "DispHTMLFontElement", "DispHTMLUListElement", "DispHTMLOListElement", "DispHTMLParaElement", "DispHTMLPhraseElement"
 				xpath.unshift(get_tag(element))
-			when "DispHTMLDocument", 
+			when "DispHTMLAnchorElement"
+				if(element.getAttribute('id') != nil) then
+					xpath.unshift(get_tag_with_id(element))
+				else
+					xpath.unshift(get_tag(element) + "[@href='#{element.href}']")
+				end
+			when "DispHTMLSpanElement"
+				if(element.getAttribute('id') != nil) then
+					xpath.unshift(get_tag_with_id(element))
+				else
+					xpath.unshift(get_tag(element))
+				end
+			when "DispHTMLDocument"
 				# End of the road
 				i = maxloop
 			else
 				printDebugComment("Unhandled XPATH element Type: #{element.ole_obj_help}  TAG: #{element.tagName} ")
-				xpath.unshift("*")
+				if(element.getAttribute('tagName') != nil) then
+					if(element.getAttribute('id') != nil) then
+						xpath.unshift(get_tag_with_id(element))
+					else
+						xpath.unshift(get_tag(element))
+					end
+				else
+					xpath.unshift("*")
+				end
 			end
 
 			i+=1
@@ -636,7 +659,7 @@ class SeleniumIERecorder
 	##//////////////////////////////////////////////////////////////////////////////////////////////////
 	def printDebugComment( message )
 		if @printDebugInfo
-			puts "# DEBUG: " + message
+			@debugfile.puts "# DEBUG: " + message
 		end
 	end
 
