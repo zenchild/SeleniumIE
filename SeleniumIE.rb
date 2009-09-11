@@ -72,9 +72,6 @@ class SeleniumIERecorder
 	@@top_level_frame_name = ""
 
 	def initialize
-		@browser = WIN32OLE.new( 'InternetExplorer.Application' )
-		@browser.visible = true
-
 		@debugfile = File.new("selenium_debug.txt", 'w+')
 		@outfile = File.new("selenium_out.txt", 'w+')
 
@@ -95,9 +92,12 @@ class SeleniumIERecorder
 		@navigate_directly = true
 
 		setDebugLevel(2)
+
+		@browser = WIN32OLE.new( 'InternetExplorer.Application' )
+		@browser.visible = true
 		
-		events = WIN32OLE_EVENT.new( @browser, 'DWebBrowserEvents2' )
-		events.on_event { |*ev_args| eventHandler( *ev_args ) }
+		@events = WIN32OLE_EVENT.new( @browser, 'DWebBrowserEvents2' )
+		@events.on_event { |*ev_args| eventHandler( *ev_args ) }
 	end
 
 
@@ -128,6 +128,7 @@ class SeleniumIERecorder
 
 	# This writes out the Selenium/RDspec statement with an optional code indentation argument.
 	def seleniumStatement(statement, indent=2)
+		puts "REC: #{statement}"
 		return(<<-EOS.gsub(/^\t*/, "\t" * indent))
 			#{statement}
 		EOS
@@ -191,7 +192,6 @@ class SeleniumIERecorder
 			printDebugComment "************** Document Complete: #{url}"
 			printDebugComment "LocationURL: #{@browser.LocationURL}"
 			printDebugComment "URL: #{url}"
-			#if( @navigate_directly && @browser.LocationURL == url ) then
 			if( @navigate_directly ) then
 				@outfile.puts seleniumStatement("@browser.open(\"#{url}\")")
 				@outfile.puts seleniumStatement("@browser.wait_for_page_to_load(30000)")
@@ -221,7 +221,6 @@ class SeleniumIERecorder
 					# register event handlers
 					printDebugComment "Adding document handler for '#{documentKey}'"
 					@activeDocuments[documentKey].on_event( 'onclick' ) { |*args| document_onclick( args[0] ) }
-					#@activeDocuments[documentKey].on_event( nil ) { |*args| document_allevents( *args ) }
 				end
 			end
  
@@ -313,75 +312,6 @@ class SeleniumIERecorder
 		end
 	end
 	
-
-	def document_allevents ( *args )
-		case args[0]
-		when /^onactivate/
-		when /^ondeactivate/
-			puts "*** DEACTIVATE *** ELEM TAG: #{args[1].srcElement.tagName}"
-			elem = args[1].srcElement
-			if elem.tagName == "INPUT"
-				case elem.Type
-				when "text", "password"
-					if elem.Value != ""
-						@outfile.puts seleniumStatement( "@browser.type \"#{ getXpath(elem) }\", \"#{elem.Value}\"" )
-					end
-				end
-
-			else
-				puts "\tTAG: #{elem.tagName}"
-			end
-
-		when /^onkeyup/
-			puts "*** KEYUP *** KEYCODE: #{args[1].getAttribute('keyCode')}"
-			elem = args[1].srcElement
-			if elem.tagName == "INPUT"
-				puts "INPUT => #{elem.Type}"
-			else
-				puts "TAG: #{elem.tagName}"
-			end
-		when /^onkeydown/
-			puts "*** KEYDOWN *** KEYCODE: #{args[1].getAttribute('keyCode')}"
-		when /^onkeypress/
-			puts "*** KEYPRESS *** KEYCODE: #{args[1].getAttribute('keyCode')}"
-		when /^onfocusout/
-			puts "*** FOCUS OUT *** ELEM TAG: #{args[1].srcElement.tagName}"
-		when /^onclick/
-			case args[1].srcElement.tagName
-			when "INPUT", "BUTTON"
-				puts "*** CLICK *** INPUT: #{args[1].srcElement.Type}"
-				case args[1].srcElement.Type
-				when "submit", "image", "button"
-					# The assumption here is that if the element is not tied to a form the page probably won't reload.
-					if args[1].srcElement.form == nil
-						str = "@browser.click \"#{getXpath(args[1].srcElement)}\""
-					else
-						str = "@browser.click \"#{getXpath(args[1].srcElement)}\", :wait_for => :page"
-					end
-					@outfile.puts seleniumStatement( str )
-				end
-
-			when "A", "SPAN", "IMG", "TD"
-				str = "@browser.click \"#{getXpath(args[1].srcElement)}\""
-				@outfile.puts seleniumStatement( str )
-			else
-				puts "*** CLICK *** INPUT: #{args[1].srcElement.tagName}"
-			end
-			@mouse_clicked = false
-		when "onmouseup"
-			if args[1].srcElement.tagName == "INPUT"
-				case args[1].srcElement.Type
-				when "submit", "image", "button"
-					@mouse_clicked = true
-				end
-			end
-		when /^onmouse[mdo]/
-			# ingnore onmouse.* events
-		else
-			puts "UH: *** #{args[0].upcase} *** "
-		end
-	end
-
 	def get_form_input (form)
 		form.all.length.times do |i|
 			elem = form.all.item(i)
@@ -392,6 +322,62 @@ class SeleniumIERecorder
 				end
 			end
 		end
+	end
+
+	def get_tag_selector(element)
+		elem_tag = element.tagName.downcase
+		case elem_tag
+		when "tr"
+			return( "#{elem_tag}" + "[#{element.sectionRowIndex+1}]" )
+		when "td"
+			return( "#{elem_tag}" + "[#{element.cellIndex+1}]" )
+		when "li"
+			return( "#{elem_tag}" + "[#{element.value+1}]" )
+		else
+			if ((elem_id = element.getAttribute('id')) != nil) then
+				return( "#{elem_tag}" + "[@id='#{elem_id}']" )
+			elsif ((elem_name = element.getAttribute('name')) != nil) then
+				return( "#{elem_tag}" + "[@name='#{elem_name}']" )
+			elsif ((elem_href = element.getAttribute('href')) != nil) then
+				return( "#{elem_tag}" + "[@href='#{elem_href}']" )
+			else
+				return(element.tagName.downcase)
+			end
+		end
+	end
+	
+	def getXpath (element)
+		xpath = []
+
+		i = 0
+		# Set the max times to loop.  This should be plenty to get a unique XPATH object
+		maxloop = 10
+		while i < maxloop and element != nil
+			case element.ole_obj_help.to_s
+			when "DispHTMLDivElement", "DispHTMLFormElement", "DispHTMLInputElement", "DispHTMLButtonElement",
+				"DispHTMLTable", "DispHTMLTableRow", "DispHTMLTableCell", "DispHTMLLIElement", "DispHTMLHtmlElement",
+				"DispHTMLBody", "DispHTMLHeaderElement", "DispHTMLTableSection", "DispHTMLFontElement", "DispHTMLUListElement",
+				"DispHTMLOListElement", "DispHTMLParaElement", "DispHTMLPhraseElement", "DispHTMLAnchorElement",
+				"DispHTMLSpanElement"
+				xpath.unshift(get_tag_selector(element))
+			when "DispHTMLDocument"
+				# End of the road
+				i = maxloop
+			else
+				printDebugComment("Unhandled XPATH element Type: #{element.ole_obj_help}  TAG: #{element.tagName} ")
+				if(element.getAttribute('tagName') != nil) then
+					xpath.unshift(get_tag_selector(element))
+				else
+					xpath.unshift("*")
+				end
+			end
+
+			i+=1
+			element = element.parentNode
+		end
+
+
+		return '//' + xpath.join('/')
 	end
 
 	# ---------------------- methods from WatirMaker ---------------
@@ -406,9 +392,16 @@ class SeleniumIERecorder
 		
 		case eventObj.srcElement.tagName
 		when "INPUT", "A"
-			if eventObj.srcElement.getAttribute('form') != nil then
-				get_form_input(eventObj.srcElement.getAttribute('form'))
+			case eventObj.srcElement.getAttribute('Type')
+			when "text", "password", "hidden"
+				# don't register onclick for these types
+			when "button", "checkbox", "file", "image", "radio", "reset", "submit"
+				if eventObj.srcElement.getAttribute('form') != nil then
+					get_form_input(eventObj.srcElement.getAttribute('form'))
+				end
+				@outfile.puts seleniumStatement( "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page" )           
 			end
+		when "A"
 			@outfile.puts seleniumStatement( "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page" )           
 		when "BUTTON", "SPAN", "IMG", "TD"
 			if eventObj.srcElement.getAttribute('form') == nil
@@ -422,222 +415,7 @@ class SeleniumIERecorder
 		end
 	end
 
-
-	def get_tag_with_id (element)
-		elem_id = element.Id
-		return( "#{element.tagName.downcase}" + ((elem_id != "") ? "[@id='#{elem_id}']" : "") )
-	end
-
-	def get_tag_with_name (element)
-		return("#{element.tagName.downcase}[@name='#{element.Name}']")
-	end
-
-	def get_tag (element)
-		return(element.tagName.downcase)
-	end
-	
-	def getXpath (element)
-		xpath = []
-
-		i = 0
-		# Set the max times to loop.  This should be plenty to get a unique XPATH object
-		maxloop = 6
-		while i < maxloop and element != nil
-			case element.ole_obj_help.to_s
-			when "DispHTMLDivElement", "DispHTMLFormElement", "DispHTMLInputElement", "DispHTMLButtonElement", "DispHTMLTable"
-				xpath.unshift(get_tag_with_id(element))
-			when "DispHTMLTableRow"
-				xpath.unshift("#{get_tag(element)}[#{element.sectionRowIndex+1}]")
-			when "DispHTMLTableCell"
-				xpath.unshift("#{get_tag(element)}[#{element.cellIndex+1}]")
-			when "DispHTMLLIElement"
-				xpath.unshift("#{get_tag(element)}[#{element.value + 1}]")
-			when "DispHTMLHtmlElement", "DispHTMLBody", "DispHTMLHeaderElement", "DispHTMLTableSection", "DispHTMLFontElement", "DispHTMLUListElement", "DispHTMLOListElement", "DispHTMLParaElement", "DispHTMLPhraseElement"
-				xpath.unshift(get_tag(element))
-			when "DispHTMLAnchorElement"
-				if(element.getAttribute('id') != nil) then
-					xpath.unshift(get_tag_with_id(element))
-				else
-					xpath.unshift(get_tag(element) + "[@href='#{element.href}']")
-				end
-			when "DispHTMLSpanElement"
-				if(element.getAttribute('id') != nil) then
-					xpath.unshift(get_tag_with_id(element))
-				else
-					xpath.unshift(get_tag(element))
-				end
-			when "DispHTMLDocument"
-				# End of the road
-				i = maxloop
-			else
-				printDebugComment("Unhandled XPATH element Type: #{element.ole_obj_help}  TAG: #{element.tagName} ")
-				if(element.getAttribute('tagName') != nil) then
-					if(element.getAttribute('id') != nil) then
-						xpath.unshift(get_tag_with_id(element))
-					else
-						xpath.unshift(get_tag(element))
-					end
-				else
-					xpath.unshift("*")
-				end
-			end
-
-			i+=1
-			element = element.parentNode
-		end
-
-
-		return '//' + xpath.join('/')
-	end
-
-
-	def getHowWhat( element )
-		if element.getAttribute( "id" ) != nil && element.getAttribute( "id" ) != ""
-			return ":id", element.getAttribute( "id" )
-		elsif element.getAttribute( "name" ) != nil && element.getAttribute( "name" ) != ""
-			return ":name", element.getAttribute( "name" )
-		else
-			#printDebugComment(element.tagName)
-			case element.tagName
-			when "A"
-				return ":text", %Q{#{element.innerText}}
-			else
-				#return the index of this element in the 'all' collection as a string
-				index = element.sourceIndex
-				if index != nil
-					return ":index", %Q{#{index}}
-				end
-			end
-		end
-	end
-
-
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	##
-	## Generates a line of WATIR script based on the HTML element and the action to take.
-	##
-	## element: The IE HTML element to perform the action on.
-	## action:  The WATIR action to perform on said element.
-	## value:   The value to assign to the element (required for 'set' and 'select' actions)
-	##
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	def writeWatirStatement( eventObj, action, value = "" )
-		str = ""
-		element = eventObj.srcElement
-		if element == nil
-			printDebugComment "writeWatirStatement eventObj.srcElement was nil!"
-			return str
-		end
-		
-		# if we're trasitioning between frames, insert a delay statement
-		if @lastFrameName != element.document.parentWindow.name
-			# TODO: How do we do a Thread.Wait() in Ruby?
-		end
-		
-		case element.tagName
-		when "INPUT"
-			case element.getAttribute( "type" )
-			when "submit", "image", "button"
-				if action == "click"
-					str = genWatirAccessor( "button", element ) + action
-				end
-			when "text", "password"
-				if action == "set"
-					str = genWatirAccessor( "text_field", element ) + action + "( '" +  element.value + "' )"
-				end
-			when "checkbox"
-				if action == "set" || action == "clear"
-					str = genWatirAccessor( "checkbox", element ) + action
-				end
-			when "radio"
-				if action == "set" || action == "clear"
-					str = genWatirAccessor( "radio", element ) + action
-				end
-			else
-				how, what = getHowWhat( eventObj.srcElement )
-				printDebugComment( "Unsupported INPUT type " + element.getAttribute( "type" ) +
-								  " (" + how + ", '" + what + "')" )
-			end
-		when "A"
-			if action == "click"
-				str = genWatirAccessor( "link", element ) + action
-			end
-		when "SPAN"
-			if action == "click"
-				str = genWatirAccessor( "span", element ) + action
-			end
-		when "IMG"
-			if action == "click"
-				str = genWatirAccessor( "image", element ) + action
-			end
-		when "TD"
-			if action == "click"
-				how, what = getHowWhat( element )
-				str = genIePrefix( element ) + "document.all[ '" + what + "' ].click"
-			end
-		when "SELECT"
-			if action == "select"
-				for i in 0..element.options.length-1
-					if element.options[ %Q{#{i}} ].selected
-						str += genWatirAccessor( "select_list", element ) + action + "( '" + \
-						element.options[ %Q{#{i}} ].text + "' )\n"
-					end
-				end
-			end
-		else
-			how, what = getHowWhat( eventObj.srcElement )
-			printDebugComment( "Unsupported onclick tagname " + eventObj.srcElement.tagName +
-							  " (" + how + ", '" + what + "')" )
-		end
-		
-		if str != ""
-			@lastFrameName = element.document.parentWindow.name
-		else
-			printDebugComment "Unsupported action '" + action + "' for '" + element.tagName + "'."
-		end
-		return str
-	end
  
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	##
-	## Generates the WATIR code necessary for accessing a particular document element.
-	##
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	def genWatirAccessor( watirType, element )
-		iePrefix = genIePrefix( element )
-		how, what = getHowWhat( element )
-		
-		# for some reason the index 'How' doesn't work for the index we get from our code
-		if how == ":index"
-			return iePrefix + "document.all[ '" + what + "' ]."
-		elsif how == ":id"
-			if what.include? "_"
-				what = what[what.rindex("_") + 1,what.length - what.rindex("_")]
-				what = "/" + what + "$/"
-			else
-				what = "'" + what + "'"
-			end
-			return iePrefix + watirType + "( " + how + ", " + what + " )."
-		else
-			return iePrefix + watirType + "( " + how + ", '" + what + "' )."
-		end
-	end
- 
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	##
-	## Generates the ie prefix necessary for accessing a particular document element, including frames.
-	##
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	def genIePrefix( element )
-		printDebugComment("genIePrefix")
-		parentWindowName = element.document.parentWindow.name
-		if parentWindowName != @@top_level_frame_name
-			return "@browser.frame( :name, '" + parentWindowName + "' )."
-		else
-			return "@browser."
-		end
-	end
-
 	##//////////////////////////////////////////////////////////////////////////////////////////////////
 	##
 	## Print warning comment.
