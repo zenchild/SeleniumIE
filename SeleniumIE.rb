@@ -120,7 +120,7 @@ class SeleniumIERecorder
 
 	# eventHandler is the dispatcher for all incoming events.
 	def eventHandler(ev_name, *ev_args)
-		printDebugComment "------------------- #{ev_name} ---------------------"
+		#printDebugComment "------------------- #{ev_name} ---------------------"
 		if methodExists?(ev_name)
 			method(ev_name).call(*ev_args)
 		end
@@ -128,7 +128,9 @@ class SeleniumIERecorder
 
 	# This writes out the Selenium/RDspec statement with an optional code indentation argument.
 	def seleniumStatement(statement, indent=2)
+		puts "----------------------------------------------"
 		puts "REC: #{statement}"
+		puts "----------------------------------------------"
 		return(<<-EOS.gsub(/^\t*/, "\t" * indent))
 			#{statement}
 		EOS
@@ -214,7 +216,8 @@ class SeleniumIERecorder
 				end
 				
 				documentKey = frameName
-				if ( pDisp.Type == "HTML Document"  && !@activeDocuments.has_key?( documentKey ) ) then
+				#if ( pDisp.Type == "HTML Document"  && !@activeDocuments.has_key?( documentKey ) ) then
+				if ( pDisp.Type == "HTML Document" )
 					# create a new document object in the hash
 					@activeDocuments[documentKey] = WIN32OLE_EVENT.new( document, 'HTMLDocumentEvents2' )
 
@@ -239,11 +242,11 @@ class SeleniumIERecorder
 
 	def form_onsubmit()
 		form = @browser.Document.activeElement.form
-		puts "***** ACCCCCCCCCCCCT #{ @browser.Document.activeElement.tagName }"
-		if @browser.Document.activeElement.tagName == "INPUT"
-			puts "***** ACCCCCCCCCCCCT #{ @browser.Document.activeElement.Type }"
-		end
-		puts "***** ACCCCCCCCCCCCT #{ @browser.Document.activeElement.Id }"
+		#puts "***** ACCCCCCCCCCCCT #{ @browser.Document.activeElement.tagName }"
+		#if @browser.Document.activeElement.tagName == "INPUT"
+		#	puts "***** ACCCCCCCCCCCCT #{ @browser.Document.activeElement.Type }"
+		#end
+		#puts "***** ACCCCCCCCCCCCT #{ @browser.Document.activeElement.Id }"
 		get_form_input( form )
 		@outfile.puts seleniumStatement( "@browser.submit \"#{ getXpath(form) }\"" ) unless @mouse_clicked
 	end
@@ -389,6 +392,7 @@ class SeleniumIERecorder
 	##//////////////////////////////////////////////////////////////////////////////////////////////////
 	def document_onclick( eventObj )
 		# if the user clicked something and the URL chandes as a result, it's probably due to this...
+		puts "ONCLICK: #{eventObj.srcElement.getAttribute('tagName')}"
 		
 		case eventObj.srcElement.tagName
 		when "INPUT", "A"
@@ -399,8 +403,8 @@ class SeleniumIERecorder
 				if eventObj.srcElement.getAttribute('form') != nil then
 					get_form_input(eventObj.srcElement.getAttribute('form'))
 				end
-				@outfile.puts seleniumStatement( "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page" )           
 			end
+			@outfile.puts seleniumStatement( "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page" )           
 		when "A"
 			@outfile.puts seleniumStatement( "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page" )           
 		when "BUTTON", "SPAN", "IMG", "TD"
@@ -437,7 +441,8 @@ class SeleniumIERecorder
 	##//////////////////////////////////////////////////////////////////////////////////////////////////
 	def printDebugComment( message )
 		if @printDebugInfo
-			@debugfile.puts "# DEBUG: " + message
+			#@debugfile.puts "# DEBUG: " + message
+			puts "# DEBUG: " + message
 		end
 	end
 
