@@ -189,7 +189,12 @@ class SeleniumIERecorder
 	def DocumentComplete(pDisp, url)
 		begin
 			# Check to see if document is loaded and catch the exception if it occurs.
-			document = pDisp.document
+			# document = pDisp.document
+			# Check to make sure the @browser object is ready for use
+			if( @browser.ReadyState != 4 )
+				printDebugComment("Browser not in \"complete\" ReadyState")
+				return 
+			end
 
 			printDebugComment "************** Document Complete: #{url}"
 			printDebugComment "LocationURL: #{@browser.LocationURL}"
@@ -219,6 +224,10 @@ class SeleniumIERecorder
 				#if ( pDisp.Type == "HTML Document"  && !@activeDocuments.has_key?( documentKey ) ) then
 				if ( pDisp.Type == "HTML Document" )
 					# create a new document object in the hash
+					if( @activeDocuments.key?(documentKey) ) then
+						@activeDocuments[documentKey] = nil
+					end
+
 					@activeDocuments[documentKey] = WIN32OLE_EVENT.new( document, 'HTMLDocumentEvents2' )
 
 					# register event handlers
