@@ -1,20 +1,20 @@
 =begin
 -----------------------------------------------------------------------------
   Copyright © 2009 Dan Wanek <dwanek@nd.gov>
- 
- 
+
+
   This file is part of SeleniumIE.
-  
+
   SeleniumIE is free software: you can redistribute it and/or
   modify it under the terms of the GNU General Public License as published
   by the Free Software Foundation, either version 3 of the License, or (at
   your option) any later version.
-  
+
   SeleniumIE is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
   Public License for more details.
-  
+
   You should have received a copy of the GNU General Public License along
   with SeleniumIE.  If not, see <http://www.gnu.org/licenses/>.
 -----------------------------------------------------------------------------
@@ -28,21 +28,21 @@ Original WatirMaker.rb license
   ---------------------------------------------------------------------------
   Copyright (c) 2004-2005, Michael S. Kelly, John Hann, and Scott Hanselman
   All rights reserved.
-  
+
   Redistribution and use in source and binary forms, with or without
   modification, are permitted provided that the following conditions are met:
-  
+
   1. Redistributions of source code must retain the above copyright notice,
   this list of conditions and the following disclaimer.
-  
+
   2. Redistributions in binary form must reproduce the above copyright
   notice, this list of conditions and the following disclaimer in the
   documentation and/or other materials provided with the distribution.
-  
-  3. Neither the names Scott Hanselman, Michael S. Kelly nor the names of 
-  contributors to this software may be used to endorse or promote products 
+
+  3. Neither the names Scott Hanselman, Michael S. Kelly nor the names of
+  contributors to this software may be used to endorse or promote products
   derived from this software without specific prior written permission.
-  
+
   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS
   IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
   THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
@@ -66,7 +66,7 @@ require 'win32ole'
 
 class SeleniumIERecorder
 
-	# ========================== Public Methods ========================= 
+	# ========================== Public Methods =========================
 	public
 
 	@@top_level_frame_name = ""
@@ -78,8 +78,8 @@ class SeleniumIERecorder
 		# contains references to all document objects that we're listening to
 		@activeDocuments = Hash.new
 
-		# stores the last frame name      
-		@lastFrameName = ""
+		# stores the string for the last onclick URL so we can do duplicate detection
+		@last_onclick = ""
 
 		@mouse_clicked = false
 
@@ -95,7 +95,7 @@ class SeleniumIERecorder
 
 		@browser = WIN32OLE.new( 'InternetExplorer.Application' )
 		@browser.visible = true
-		
+
 		@events = WIN32OLE_EVENT.new( @browser, 'DWebBrowserEvents2' )
 		@events.on_event { |*ev_args| eventHandler( *ev_args ) }
 	end
@@ -104,7 +104,7 @@ class SeleniumIERecorder
 	# This is the main loop that listens for events coming in from IE and dispatches them.
 	def record
 		trap('INT') { puts ""; throw :done }
-		
+
 		@outfile.puts header
 		catch(:done) do
 			loop do
@@ -115,7 +115,7 @@ class SeleniumIERecorder
 	end
 
 
-	# ========================= Private Methods ========================= 
+	# ========================= Private Methods =========================
 	private
 
 	# eventHandler is the dispatcher for all incoming events.
@@ -182,7 +182,7 @@ class SeleniumIERecorder
 		if targetFrameName == @@top_level_frame_name
 			@frameNames = Array.new
 		end
-		@frameNames << targetFrameName 
+		@frameNames << targetFrameName
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768329(VS.85).aspx
@@ -193,7 +193,7 @@ class SeleniumIERecorder
 			# Check to make sure the @browser object is ready for use
 			if( @browser.ReadyState != 4 )
 				printDebugComment("Browser not in \"complete\" ReadyState")
-				return 
+				return
 			end
 
 			printDebugComment "************** Document Complete: #{url}"
@@ -205,7 +205,7 @@ class SeleniumIERecorder
 				@navigate_directly = false
 			end
 
-			
+
 			@frameNames.each do |frameName|
 				if frameName == @@top_level_frame_name then
 					printDebugComment "TOP: #{frameName}"
@@ -214,12 +214,14 @@ class SeleniumIERecorder
 					printDebugComment "FRAME: #{frameName}"
 					document = pDisp.document.frames[frameName].document
 				end
-				
+
 				forms = document.forms
 				forms.length.times do |i|
 					forms.item(i).onsubmit = method("form_onsubmit")
 				end
-				
+
+				document.onclick = ""
+
 				documentKey = frameName
 				#if ( pDisp.Type == "HTML Document"  && !@activeDocuments.has_key?( documentKey ) ) then
 				if ( pDisp.Type == "HTML Document" )
@@ -235,7 +237,7 @@ class SeleniumIERecorder
 					@activeDocuments[documentKey].on_event( 'onclick' ) { |*args| document_onclick( args[0] ) }
 				end
 			end
- 
+
 		rescue WIN32OLERuntimeError => e
 			if e.to_s.match( "nknown property or method" )
 				printDebugComment "Document not yet loaded"
@@ -323,7 +325,7 @@ class SeleniumIERecorder
 			@navigate_directly = true
 		end
 	end
-	
+
 	def get_form_input (form)
 		form.all.length.times do |i|
 			elem = form.all.item(i)
@@ -357,7 +359,7 @@ class SeleniumIERecorder
 			end
 		end
 	end
-	
+
 	def getXpath (element)
 		xpath = []
 
@@ -402,7 +404,8 @@ class SeleniumIERecorder
 	def document_onclick( eventObj )
 		# if the user clicked something and the URL chandes as a result, it's probably due to this...
 		puts "ONCLICK: #{eventObj.srcElement.getAttribute('tagName')}"
-		
+		str = ""
+
 		case eventObj.srcElement.tagName
 		when "INPUT", "A"
 			case eventObj.srcElement.getAttribute('Type')
@@ -413,22 +416,36 @@ class SeleniumIERecorder
 					get_form_input(eventObj.srcElement.getAttribute('form'))
 				end
 			end
-			@outfile.puts seleniumStatement( "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page" )           
+			str = "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page"
+			if str == @last_onclick
+				str = "DUP? #{str}"
+			end
+			@outfile.puts seleniumStatement( str )
 		when "A"
-			@outfile.puts seleniumStatement( "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page" )           
+			str = "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page"
+			if str == @last_onclick
+				str = "DUP? #{str}"
+			end
+			@outfile.puts seleniumStatement( str )
 		when "BUTTON", "SPAN", "IMG", "TD"
 			if eventObj.srcElement.getAttribute('form') == nil
 				str = "@browser.click \"#{getXpath(eventObj.srcElement)}\""
 			else
 				str = "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page"
 			end
+
+			if str == @last_onclick
+				str = "DUP? #{str}"
+			end
 			@outfile.puts seleniumStatement( str )
 		else
 			printDebugComment( "Unsupported onclick tagname " + eventObj.srcElement.tagName )
 		end
+
+		@last_onclick = str
 	end
 
- 
+
 	##//////////////////////////////////////////////////////////////////////////////////////////////////
 	##
 	## Print warning comment.
@@ -467,12 +484,12 @@ class SeleniumIERecorder
 		puts "# navigating to: '" + url + "'"
 		puts ""
 	end
-	
+
 	def setDebugLevel(level)
 		if level >= 2
 			@printDebugInfo = true
 		else
-			@printDebugInfo = false			
+			@printDebugInfo = false
 		end
 		if level >= 1
 			@printWarnings = true
