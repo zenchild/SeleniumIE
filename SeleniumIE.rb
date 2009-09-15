@@ -18,49 +18,16 @@
   You should have received a copy of the GNU General Public License along
   with SeleniumIE.  If not, see <http://www.gnu.org/licenses/>.
 -----------------------------------------------------------------------------
-
-Original WatirMaker.rb license
------------------------------------------------------------------------------
-  This code is heavily inspired by the wonderful WatirMaker.rb program
-  which was originally licensed under the following:
-
-  license
-  ---------------------------------------------------------------------------
-  Copyright (c) 2004-2005, Michael S. Kelly, John Hann, and Scott Hanselman
-  All rights reserved.
-
-  Redistribution and use in source and binary forms, with or without
-  modification, are permitted provided that the following conditions are met:
-
-  1. Redistributions of source code must retain the above copyright notice,
-  this list of conditions and the following disclaimer.
-
-  2. Redistributions in binary form must reproduce the above copyright
-  notice, this list of conditions and the following disclaimer in the
-  documentation and/or other materials provided with the distribution.
-
-  3. Neither the names Scott Hanselman, Michael S. Kelly nor the names of
-  contributors to this software may be used to endorse or promote products
-  derived from this software without specific prior written permission.
-
-  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS
-  IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
-  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-  PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR
-  CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
-  OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
-  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
-  OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
-  ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-  --------------------------------------------------------------------------
 =end
 
 # This program attempts to output Selenium code within RSpec tests that is generated
 # by attaching to a Win32ole Internet Explorer application and listening for events.
 # I hope that this will provide similar functionality for IE that the wonderful
 # SeleniumIDE for Firefox already achieves.
+#
+# I would like to thank Michael S. Kelly, John Hann, and Scott Hanselman for their
+# work on WatirMaker.rb, which inspired this code.  Early versions of this script
+# contained quite a bit of the code used in WatirMaker.rb.
 require 'win32ole'
 
 
@@ -122,7 +89,7 @@ class SeleniumIERecorder
 
 	# eventHandler is the dispatcher for all incoming events.
 	def eventHandler(ev_name, *ev_args)
-		#printDebugComment "------------------- #{ev_name} ---------------------"
+		#debug_msg "------------------- #{ev_name} ---------------------"
 		if methodExists?(ev_name)
 			method(ev_name).call(*ev_args)
 		end
@@ -130,20 +97,20 @@ class SeleniumIERecorder
 
 	# This writes out the Selenium/RDspec statement with an optional code indentation argument.
 	def selenium_statement(statement, indent=2)
-		printDebugComment "----------------------------------------------"
-		printDebugComment "REC: #{statement}"
-		printDebugComment "----------------------------------------------"
+		debug_msg "----------------------------------------------"
+		debug_msg "REC: #{statement}"
+		debug_msg "----------------------------------------------"
 		return(<<-EOS.gsub(/^\t*/, "\t" * indent))
 			#{statement}
 		EOS
 	end
 
-	def rspec_begin(descriptor="this is test case #{test_case}")
-		selenium_statement("it \"descriptor\" do",1)
+	def rspec_begin(descriptor="this is test case #{@test_case}")
+		return selenium_statement("it \"descriptor\" do",1)
 	end
 
 	def rspec_end()
-		selenium_statement("end",1)
+		return selenium_statement("end",1)
 	end
 
 
@@ -199,13 +166,13 @@ class SeleniumIERecorder
 			# document = pDisp.document
 			# Check to make sure the @browser object is ready for use
 			if( @browser.ReadyState != 4 )
-				printDebugComment("Browser not in \"complete\" ReadyState")
+				debug_msg("Browser not in \"complete\" ReadyState")
 				return
 			end
 
-			printDebugComment "************** Document Complete: #{url}"
-			printDebugComment "LocationURL: #{@browser.LocationURL}"
-			printDebugComment "URL: #{url}"
+			debug_msg "************** Document Complete: #{url}"
+			debug_msg "LocationURL: #{@browser.LocationURL}"
+			debug_msg "URL: #{url}"
 			if( @navigate_directly ) then
 				@outfile.puts selenium_statement("@browser.open(\"#{url}\")")
 				@outfile.puts selenium_statement("@browser.wait_for_page_to_load(30000)")
@@ -215,10 +182,10 @@ class SeleniumIERecorder
 
 			@frameNames.each do |frameName|
 				if frameName == @@top_level_frame_name then
-					printDebugComment "TOP: #{frameName}"
+					debug_msg "TOP: #{frameName}"
 					document = pDisp.document
 				else
-					printDebugComment "FRAME: #{frameName}"
+					debug_msg "FRAME: #{frameName}"
 					document = pDisp.document.frames[frameName].document
 				end
 
@@ -240,17 +207,17 @@ class SeleniumIERecorder
 					@activeDocuments[documentKey] = WIN32OLE_EVENT.new( document, 'HTMLDocumentEvents2' )
 
 					# register event handlers
-					printDebugComment "Adding document handler for '#{documentKey}'"
+					debug_msg "Adding document handler for '#{documentKey}'"
 					@activeDocuments[documentKey].on_event( 'onclick' ) { |*args| document_onclick( args[0] ) }
 				end
 			end
 
 		rescue WIN32OLERuntimeError => e
 			if e.to_s.match( "nknown property or method" )
-				printDebugComment "Document not yet loaded"
+				debug_msg "Document not yet loaded"
 				return
 			elsif e.to_s.match( "Access is denied" )
-				printDebugComment "Method access denied"
+				debug_msg "Method access denied"
 				return
 			else
 				raise e
@@ -272,22 +239,22 @@ class SeleniumIERecorder
 	# http://msdn.microsoft.com/en-us/library/aa768334(VS.85).aspx
 =begin
 	def NavigateComplete2(pDisp, url)
-		printDebugComment "** Navigation to #{url} complete **"
+		debug_msg "** Navigation to #{url} complete **"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/bb268221(VS.85).aspx
 	def NavigateError(pDisp, url, targetFrameName, statusCode, cancel)
-		printDebugComment "Navigation ERROR occured (#{url}):  Status Code #{statusCode}"
+		debug_msg "Navigation ERROR occured (#{url}):  Status Code #{statusCode}"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768336(VS.85).aspx
 	def NewWindow2(ppDisp, cancel)
-		printDebugComment "NewWindow2 event fired"
+		debug_msg "NewWindow2 event fired"
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768337(VS.85).aspx
 	def NewWindow3(ppDisp, cancel, dwFlags, bstrUrlContext, bstrUrl)
-		printDebugComment "NewWindow3 event fired"
+		debug_msg "NewWindow3 event fired"
 	end
 =end
 
@@ -299,35 +266,35 @@ class SeleniumIERecorder
 
 	# http://msdn.microsoft.com/en-us/library/aa768347(VS.85).aspx
 	#def ProgressChange(nProgress, nProgressMax)
-	#	printDebugComment "Progress Changed: #{nProgress}"
+	#	debug_msg "Progress Changed: #{nProgress}"
 	#end
 
 	# http://msdn.microsoft.com/en-us/library/aa768348(VS.85).aspx
 =begin
 	def PropertyChange(sProperty)
-		printDebugComment "Property Changed: #{sProperty}"
+		debug_msg "Property Changed: #{sProperty}"
 		prop = @browser.GetProperty(sProperty)
 		if prop != nil
-			printDebugComment "\tPROP: #{prop.class.to_s}"
-			printDebugComment "\tPROP: #{prop}"
-			printDebugComment "\tPROP: #{str}"
+			debug_msg "\tPROP: #{prop.class.to_s}"
+			debug_msg "\tPROP: #{prop}"
+			debug_msg "\tPROP: #{str}"
 		end
 	end
 =end
 
 	# http://msdn.microsoft.com/en-us/library/aa768349(VS.85).aspx
 	#def StatusTextChange(sText)
-		#printDebugComment "Status Text Changed: #{sText}"
+		#debug_msg "Status Text Changed: #{sText}"
 	#end
 
 	# http://msdn.microsoft.com/en-us/library/aa768350(VS.85).aspx
 	#def TitleChange(sText)
-	#	printDebugComment "Title changed to #{sText}"
+	#	debug_msg "Title changed to #{sText}"
 	#end
 
 	# http://msdn.microsoft.com/en-us/library/aa768358(VS.85).aspx
 	def WindowStateChanged(dwFlags, dwValidFlagsMask)
-		printDebugComment( "Window State Changed: FLAGS: #{dwFlags}  MASK: #{dwValidFlagsMask}" )
+		debug_msg( "Window State Changed: FLAGS: #{dwFlags}  MASK: #{dwValidFlagsMask}" )
 		if dwFlags == 3 and dwValidFlagsMask == 3 then
 			@navigate_directly = true
 		end
@@ -337,7 +304,7 @@ class SeleniumIERecorder
 		form.all.length.times do |i|
 			elem = form.all.item(i)
 			if elem.tagName == "INPUT"
-				printDebugComment( "Getting Form Input Tag/Type: #{elem.tagName}, #{elem.Type} " )
+				debug_msg( "Getting Form Input Tag/Type: #{elem.tagName}, #{elem.Type} " )
 				if elem.Type == "text" or elem.Type == "password"
 					@outfile.puts selenium_statement( "@browser.type \"#{ getXpath(elem) }\", \"#{elem.Value}\"" )
 				end
@@ -385,7 +352,7 @@ class SeleniumIERecorder
 				# End of the road
 				i = maxloop
 			else
-				printDebugComment("Unhandled XPATH element Type: #{element.ole_obj_help}  TAG: #{element.tagName} ")
+				debug_msg("Unhandled XPATH element Type: #{element.ole_obj_help}  TAG: #{element.tagName} ")
 				if(element.getAttribute('tagName') != nil) then
 					xpath.unshift(get_tag_selector(element))
 				else
@@ -405,7 +372,7 @@ class SeleniumIERecorder
 	# This method is a sink for Document (IHTMLDocument2) onclick events.
 	# http://msdn.microsoft.com/en-us/library/aa752574(VS.85).aspx
 	def document_onclick( eventObj )
-		printDebugComment "ONCLICK: #{eventObj.srcElement.getAttribute('tagName')}"
+		debug_msg "ONCLICK: #{eventObj.srcElement.getAttribute('tagName')}"
 		str = ""
 
 		case eventObj.srcElement.tagName
@@ -441,64 +408,19 @@ class SeleniumIERecorder
 			end
 			@outfile.puts selenium_statement( str )
 		else
-			printDebugComment( "Unsupported onclick tagname " + eventObj.srcElement.tagName )
+			debug_msg( "Unsupported onclick tagname " + eventObj.srcElement.tagName )
 		end
 
 		@last_onclick = str
 	end
 
-	# ---------------------- methods from WatirMaker ---------------
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	##
-	## Print warning comment.
-	##
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	def printWarningComment( warning )
-		if @printWarnings
-			puts ""
-			puts "# WARNING: '" + warning
-			puts ""
-		end
-	end
-
-
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	##
-	## Print a debug message comment.
-	##
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	def printDebugComment( message )
-		if @printDebugInfo
+	def debug_msg( message )
+		if $DEBUG
 			#@debugfile.puts "# DEBUG: " + message
 			puts "# DEBUG: " + message
 		end
 	end
 
-
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	##
-	## Print comment showing the page navigated to.
-	##
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	def printNavigateComment( url, frameName )
-		puts ""
-		puts "# frame loading: '" + frameName + "'" if frameName != nil
-		puts "# navigating to: '" + url + "'"
-		puts ""
-	end
-
-	def setDebugLevel(level)
-		if level >= 2
-			@printDebugInfo = true
-		else
-			@printDebugInfo = false
-		end
-		if level >= 1
-			@printWarnings = true
-		else
-			@printWarnings = false
-		end
-   end
 end  # class SeleniumIERecorder
 
 
