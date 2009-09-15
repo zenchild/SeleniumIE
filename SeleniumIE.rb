@@ -58,8 +58,6 @@ class SeleniumIERecorder
 		# but for most intents and purposes of recording a transaction it should work fine.
 		@navigate_directly = true
 
-		setDebugLevel(2)
-
 		@browser = WIN32OLE.new( 'InternetExplorer.Application' )
 		@browser.visible = true
 
