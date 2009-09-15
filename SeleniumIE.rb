@@ -106,11 +106,13 @@ class SeleniumIERecorder
 		trap('INT') { puts ""; throw :done }
 
 		@outfile.puts header
+		@outfile.puts rspec_begin
 		catch(:done) do
 			loop do
 				WIN32OLE_EVENT.message_loop
 			end
 		end
+		@outfile.puts rspec_end
 		@outfile.puts footer
 	end
 
@@ -127,21 +129,21 @@ class SeleniumIERecorder
 	end
 
 	# This writes out the Selenium/RDspec statement with an optional code indentation argument.
-	def seleniumStatement(statement, indent=2)
-		puts "----------------------------------------------"
-		puts "REC: #{statement}"
-		puts "----------------------------------------------"
+	def selenium_statement(statement, indent=2)
+		printDebugComment "----------------------------------------------"
+		printDebugComment "REC: #{statement}"
+		printDebugComment "----------------------------------------------"
 		return(<<-EOS.gsub(/^\t*/, "\t" * indent))
 			#{statement}
 		EOS
 	end
 
 	def rspec_begin(descriptor="this is test case #{test_case}")
-		seleniumStatement("it \"descriptor\" do",1)
+		selenium_statement("it \"descriptor\" do",1)
 	end
 
 	def rspec_end()
-		seleniumStatement("end",1)
+		selenium_statement("end",1)
 	end
 
 
@@ -200,8 +202,8 @@ class SeleniumIERecorder
 			printDebugComment "LocationURL: #{@browser.LocationURL}"
 			printDebugComment "URL: #{url}"
 			if( @navigate_directly ) then
-				@outfile.puts seleniumStatement("@browser.open(\"#{url}\")")
-				@outfile.puts seleniumStatement("@browser.wait_for_page_to_load(30000)")
+				@outfile.puts selenium_statement("@browser.open(\"#{url}\")")
+				@outfile.puts selenium_statement("@browser.wait_for_page_to_load(30000)")
 				@navigate_directly = false
 			end
 
@@ -259,7 +261,7 @@ class SeleniumIERecorder
 		#end
 		#puts "***** ACCCCCCCCCCCCT #{ @browser.Document.activeElement.Id }"
 		get_form_input( form )
-		@outfile.puts seleniumStatement( "@browser.submit \"#{ getXpath(form) }\"" ) unless @mouse_clicked
+		@outfile.puts selenium_statement( "@browser.submit \"#{ getXpath(form) }\"" ) unless @mouse_clicked
 	end
 
 	# http://msdn.microsoft.com/en-us/library/aa768334(VS.85).aspx
@@ -332,7 +334,7 @@ class SeleniumIERecorder
 			if elem.tagName == "INPUT"
 				printDebugComment( "Getting Form Input Tag/Type: #{elem.tagName}, #{elem.Type} " )
 				if elem.Type == "text" or elem.Type == "password"
-					@outfile.puts seleniumStatement( "@browser.type \"#{ getXpath(elem) }\", \"#{elem.Value}\"" )
+					@outfile.puts selenium_statement( "@browser.type \"#{ getXpath(elem) }\", \"#{elem.Value}\"" )
 				end
 			end
 		end
@@ -394,16 +396,11 @@ class SeleniumIERecorder
 		return '//' + xpath.join('/')
 	end
 
-	# ---------------------- methods from WatirMaker ---------------
-	#
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
-	##
-	## Handles document onclick events.
-	##
-	##//////////////////////////////////////////////////////////////////////////////////////////////////
+
+	# This method is a sink for Document (IHTMLDocument2) onclick events.
+	# http://msdn.microsoft.com/en-us/library/aa752574(VS.85).aspx
 	def document_onclick( eventObj )
-		# if the user clicked something and the URL chandes as a result, it's probably due to this...
-		puts "ONCLICK: #{eventObj.srcElement.getAttribute('tagName')}"
+		printDebugComment "ONCLICK: #{eventObj.srcElement.getAttribute('tagName')}"
 		str = ""
 
 		case eventObj.srcElement.tagName
@@ -420,13 +417,13 @@ class SeleniumIERecorder
 			if str == @last_onclick
 				str = "DUP? #{str}"
 			end
-			@outfile.puts seleniumStatement( str )
+			@outfile.puts selenium_statement( str )
 		when "A"
 			str = "@browser.click \"#{getXpath(eventObj.srcElement)}\", :wait_for => :page"
 			if str == @last_onclick
 				str = "DUP? #{str}"
 			end
-			@outfile.puts seleniumStatement( str )
+			@outfile.puts selenium_statement( str )
 		when "BUTTON", "SPAN", "IMG", "TD"
 			if eventObj.srcElement.getAttribute('form') == nil
 				str = "@browser.click \"#{getXpath(eventObj.srcElement)}\""
@@ -437,7 +434,7 @@ class SeleniumIERecorder
 			if str == @last_onclick
 				str = "DUP? #{str}"
 			end
-			@outfile.puts seleniumStatement( str )
+			@outfile.puts selenium_statement( str )
 		else
 			printDebugComment( "Unsupported onclick tagname " + eventObj.srcElement.tagName )
 		end
@@ -445,7 +442,7 @@ class SeleniumIERecorder
 		@last_onclick = str
 	end
 
-
+	# ---------------------- methods from WatirMaker ---------------
 	##//////////////////////////////////////////////////////////////////////////////////////////////////
 	##
 	## Print warning comment.
