@@ -159,6 +159,11 @@ class SeleniumIERecorder
 			require 'spec'
 
 			describe "Test Case 1 (RENAME THIS)" do
+				before(:all) do
+					@browser = Selenium::Client::Driver.new("localhost", 4444, "*iexplore", "http://", 10000);
+					@browser.start
+				end
+
 		EOS
 	end
 
